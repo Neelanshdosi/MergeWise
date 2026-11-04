@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import time
 from typing import Any, Dict, List, Optional
 import httpx
@@ -25,7 +26,9 @@ class GitHubRateLimitError(HTTPException):
 
 class GitHubClient:
     def __init__(self, token: Optional[str] = None):
-        self.token = token
+        import os
+        from ..config import settings
+        self.token = token or getattr(settings, "GITHUB_TOKEN", None) or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         self.headers = {
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "MergeWise-OSS-Match-Agent/1.0",
@@ -38,6 +41,7 @@ class GitHubClient:
             "search": ResourceRateLimit(resource="search", remaining=30, limit=30),
         }
         self.total_search_calls = 0
+        self._concurrency_sem = asyncio.Semaphore(6)
 
     def _get_cache(self, key: str, force_refresh: bool = False) -> Optional[Any]:
         if force_refresh:
@@ -93,11 +97,15 @@ class GitHubClient:
 
         # Resource-specific thresholds:
         # Search: trigger ONLY on actual limit response or when remaining is 0 (30 req/min).
-        # Core: trigger on actual limit response or small safety buffer <= 50 (5000 req/hr).
+        # Core: if limit > 100 (authenticated), trigger on actual limit or remaining <= 10.
+        #       if limit <= 100 (unauthenticated), trigger ONLY on actual limit or remaining <= 0.
         if resource == "search":
             is_limited = is_actual_limit_response or (remaining <= 0)
         else:
-            is_limited = is_actual_limit_response or (remaining <= 50)
+            if limit > 100:
+                is_limited = is_actual_limit_response or (remaining <= 50)
+            else:
+                is_limited = is_actual_limit_response or (remaining <= 0)
 
         self.rate_limits[resource] = ResourceRateLimit(
             resource=resource,
@@ -140,14 +148,54 @@ class GitHubClient:
             else:
                 cached_limit.is_limited = False
 
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            resp = await client.get(url, headers=self.headers, params=params)
-            self._record_rate_limit(resp)
-            resp.raise_for_status()
-            data = resp.json()
+        max_attempts = 3
+        last_error: Optional[Exception] = None
 
-        self._set_cache(cache_key, data, ttl_seconds)
-        return data
+        async with self._concurrency_sem:
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    async with httpx.AsyncClient(timeout=14.0, follow_redirects=True) as client:
+                        resp = await client.get(url, headers=self.headers, params=params)
+                        self._record_rate_limit(resp)
+
+                        # Check for transient retryable status codes (429, 500, 502, 503, 504)
+                        if resp.status_code in (429, 500, 502, 503, 504) and attempt < max_attempts:
+                            retry_after_hdr = resp.headers.get("retry-after")
+                            if retry_after_hdr and retry_after_hdr.isdigit():
+                                delay = float(retry_after_hdr)
+                            else:
+                                delay = (0.75 * (2 ** (attempt - 1))) + random.uniform(0.1, 0.4)
+                            logger.warning(
+                                f"[GH-RETRY] HTTP {resp.status_code} on {url}. "
+                                f"Retrying attempt {attempt + 1}/{max_attempts} after {delay:.2f}s..."
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+
+                        resp.raise_for_status()
+                        data = resp.json()
+                        self._set_cache(cache_key, data, ttl_seconds)
+                        return data
+
+                except (httpx.TimeoutException, httpx.NetworkError) as te:
+                    last_error = te
+                    if attempt < max_attempts:
+                        delay = (0.75 * (2 ** (attempt - 1))) + random.uniform(0.1, 0.4)
+                        logger.warning(
+                            f"[GH-RETRY] {type(te).__name__} on {url}. "
+                            f"Retrying attempt {attempt + 1}/{max_attempts} after {delay:.2f}s..."
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise te
+                except httpx.HTTPStatusError as hse:
+                    logger.error(
+                        f"[GH-ERROR] HTTP {hse.response.status_code} on {url}: {hse.response.text[:200]}"
+                    )
+                    raise hse
+
+        if last_error:
+            raise last_error
 
     async def get_user_profile(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Fetches the authenticated user profile."""
@@ -176,17 +224,14 @@ class GitHubClient:
                 return base64.b64decode(data["content"]).decode("utf-8", errors="ignore")
         except Exception:
             return None
+
     async def get_repo_details(self, repo_full_name: str) -> Optional[Dict[str, Any]]:
         """
         Fetches repository details including stargazers_count, pushed_at, open_issues_count, and topics.
         Cached for 30 minutes (1800s).
         """
         url = f"https://api.github.com/repos/{repo_full_name}"
-        try:
-            return await self.get(url, ttl_seconds=1800)
-        except Exception as e:
-            logger.warning(f"Failed to fetch repo details for {repo_full_name}: {e}")
-            return None
+        return await self.get(url, ttl_seconds=1800)
 
     async def get_repo_manifest_frameworks(
         self,
@@ -264,3 +309,63 @@ class GitHubClient:
             return await self.get(timeline_url, params={"per_page": 20}, ttl_seconds=600)
         except Exception:
             return []
+
+    async def get_repo_git_tree(self, repo_full_name: str, tree_sha: str = "HEAD") -> List[str]:
+        """
+        Fetches the recursive file tree of the repository.
+        Cached for 2 hours (7200s). Returns list of relative file paths.
+        """
+        cache_key = f"git_tree:{repo_full_name}:{tree_sha}"
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cached
+
+        url = f"https://api.github.com/repos/{repo_full_name}/git/trees/{tree_sha}"
+        try:
+            data = await self.get(url, params={"recursive": "1"}, ttl_seconds=7200)
+            if isinstance(data, dict) and "tree" in data:
+                file_paths = [
+                    item["path"]
+                    for item in data["tree"]
+                    if isinstance(item, dict) and item.get("type") in ("blob", "commit")
+                ]
+                self._set_cache(cache_key, file_paths, ttl_seconds=7200)
+                return file_paths
+        except Exception as e:
+            logger.warning(f"Failed to fetch git tree for {repo_full_name}: {e}")
+
+        # Fallback to empty list
+        return []
+
+    async def get_recent_issues_sample(self, repo_full_name: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Fetches sample of recent issues (including closed) to analyze response times."""
+        url = f"https://api.github.com/repos/{repo_full_name}/issues"
+        params = {"state": "all", "per_page": min(limit, 100), "sort": "created", "direction": "desc"}
+        try:
+            data = await self.get(url, params=params, ttl_seconds=1800)
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.warning(f"Failed to fetch recent issues for {repo_full_name}: {e}")
+            return []
+
+    async def get_recent_pulls_sample(
+        self, repo_full_name: str, limit: int = 50, state: str = "closed"
+    ) -> List[Dict[str, Any]]:
+        """Fetches sample of recent pull requests to calculate outside-contributor merge rate."""
+        url = f"https://api.github.com/repos/{repo_full_name}/pulls"
+        params = {"state": state, "per_page": min(limit, 100), "sort": "updated", "direction": "desc"}
+        logger.info(f"Querying GitHub pulls for {repo_full_name}: URL={url}, params={params}")
+        try:
+            data = await self.get(url, params=params, ttl_seconds=1800)
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.warning(f"Failed to fetch recent PRs for {repo_full_name}: {e}")
+            return []
+
+    async def get_community_profile(self, repo_full_name: str) -> Optional[Dict[str, Any]]:
+        """Fetches community profile (health percentage, contributing guide path)."""
+        url = f"https://api.github.com/repos/{repo_full_name}/community/profile"
+        try:
+            return await self.get(url, ttl_seconds=3600)
+        except Exception:
+            return None

@@ -1,7 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { ScoredIssueCandidate } from "@/lib/types";
+import PlanModal from "./PlanModal";
 
 interface IssueCardProps {
   candidate: ScoredIssueCandidate;
@@ -11,7 +13,20 @@ interface IssueCardProps {
 export default function IssueCard({ candidate, index }: IssueCardProps) {
   const { issue, score, one_line_reason, score_breakdown } = candidate;
   const scorePercent = Math.round(score * 100);
-  const [showBreakdown, setShowBreakdown] = React.useState<boolean>(false);
+  const [showBreakdown, setShowBreakdown] = useState<boolean>(false);
+  const [isPlanModalOpen, setIsPlanModalOpen] = useState<boolean>(false);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const { getToken } = useAuth();
+
+  const handleOpenPlan = async () => {
+    try {
+      const token = await getToken();
+      setSessionToken(token);
+    } catch {
+      // Allow guest/unauthenticated preview
+    }
+    setIsPlanModalOpen(true);
+  };
 
   return (
     <div
@@ -185,16 +200,40 @@ export default function IssueCard({ candidate, index }: IssueCardProps) {
           )}
         </div>
 
-        <a
-          href={issue.html_url || issue.issue_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn-secondary"
-          style={{ padding: "6px 14px", fontSize: "0.85rem" }}
-        >
-          View on GitHub ↗
-        </a>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+          <button
+            onClick={handleOpenPlan}
+            className="btn-primary"
+            style={{
+              padding: "7px 16px",
+              fontSize: "0.85rem",
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "6px",
+            }}
+          >
+            <span>🚀</span> How to Start
+          </button>
+          <a
+            href={issue.html_url || issue.issue_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-secondary"
+            style={{ padding: "6px 14px", fontSize: "0.85rem" }}
+          >
+            View on GitHub ↗
+          </a>
+        </div>
       </div>
+
+      {/* Deep-Dive Starter Plan Modal */}
+      <PlanModal
+        isOpen={isPlanModalOpen}
+        onClose={() => setIsPlanModalOpen(false)}
+        candidate={candidate}
+        jwtToken={sessionToken}
+      />
     </div>
   );
 }

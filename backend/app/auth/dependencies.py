@@ -36,3 +36,15 @@ async def get_current_user(
     claims = await verify_clerk_token(token)
     user_id = claims["sub"]
     return AuthenticatedUser(user_id=user_id, claims=claims)
+
+
+async def get_current_user_optional(
+    authorization: Optional[str] = Header(None, description="Bearer <clerk_session_jwt>")
+) -> Optional[AuthenticatedUser]:
+    """Optional dependency that returns AuthenticatedUser if valid token provided, else None."""
+    if not authorization:
+        return None
+    try:
+        return await get_current_user(authorization)
+    except Exception:
+        return None

@@ -6,6 +6,7 @@ from .config import settings
 from .logging_config import setup_logging
 from .routers.auth import auth_router
 from .routers.recommendations import router as recommendations_router
+from .routers.plan import router as plan_router
 
 # Initialize sensitive-token-redacting logger
 logger = setup_logging()
@@ -31,6 +32,7 @@ app.add_middleware(
 # Register routers
 app.include_router(auth_router)
 app.include_router(recommendations_router)
+app.include_router(plan_router)
 
 
 @app.get("/health", tags=["Health"])
