@@ -11,7 +11,14 @@
 | **Language-Match Only** | 0.124 [0.084, 0.164] | 0.318 [0.266, 0.372] | 0.456 [0.401, 0.518] | 0.297 [0.262, 0.334] | 274 |
 | **Random Good-First-Issue** | 0.062 [0.040, 0.091] | 0.223 [0.186, 0.277] | 0.325 [0.285, 0.387] | 0.224 [0.204, 0.254] | 274 |
 
-### 2. Large Candidate Pool ($K=50$ candidates per pool, 1 positive)
+### 2. Paired Comparisons with Bootstrap CI on Difference ($K=15$)
+
+| Paired Comparison ($\Delta = A - B$) | $\Delta$ Hit@1 (95% CI) | $\Delta$ Hit@3 (95% CI) | $\Delta$ Hit@5 (95% CI) | $\Delta$ MRR (95% CI) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Heuristic vs Language-Match** | -0.062 [-0.109, -0.015] | -0.044 [-0.113, +0.022] | -0.015 [-0.091, +0.058] | -0.045 [-0.085, -0.008] |
+| **Heuristic vs Random** | +0.000 [-0.036, +0.033] | +0.051 [-0.015, +0.117] | +0.117 [+0.033, +0.197] | +0.029 [-0.006, +0.064] |
+
+### 3. Large Candidate Pool ($K=50$ candidates per pool, 1 positive)
 
 | Ranking Method | Hit@1 (95% CI) | Hit@3 (95% CI) | Hit@5 (95% CI) | MRR (95% CI) | Test Pools |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -22,16 +29,16 @@
 | **Language-Match Only** | 0.022 [0.004, 0.040] | 0.080 [0.051, 0.113] | 0.131 [0.091, 0.168] | 0.103 [0.086, 0.125] | 274 |
 | **Random Good-First-Issue** | 0.011 [0.000, 0.022] | 0.051 [0.029, 0.080] | 0.095 [0.062, 0.128] | 0.081 [0.066, 0.097] | 274 |
 
-### 3. Leakage Sanity Tests ($K=15$)
+### 4. Leakage Sanity Tests ($K=15$)
 
 | Sanity Test Experiment | Hit@1 | Hit@3 | Hit@5 | MRR | Expected Behavior |
 | :--- | :---: | :---: | :---: | :---: | :--- |
 | (a) Shuffled Labels within Pools | 0.058 | 0.175 | 0.303 | 0.210 | Drops to random baseline (~0.33) |
 | (b) Drop All User Features | 0.073 | 0.204 | 0.296 | 0.216 | Retains signal without user features |
 | (c) Drop Repo Stars / Identifiers | 0.073 | 0.212 | 0.336 | 0.229 | Retains signal without user features |
-| (d) Repo-Disjoint Train/Test Split | 0.222 | 0.659 | 0.903 | 0.474 | Retains signal without user features |
+| (d) Clean Repo-Disjoint Split (Fixed) | 0.096 | 0.259 | 0.404 | 0.259 | Retains signal without user features |
 
-### 4. Feature Variance Audit
+### 5. Feature Variance Audit
 
 | Feature | Mean Within-Pool Variance | Notes |
 | :--- | :---: | :--- |

@@ -297,6 +297,52 @@
       "pools": 274
     }
   },
+  "paired_comparisons": {
+    "heuristic_vs_language_match": {
+      "hit@1": {
+        "diff": -0.062,
+        "ci_low": -0.109,
+        "ci_high": -0.015
+      },
+      "hit@3": {
+        "diff": -0.044,
+        "ci_low": -0.113,
+        "ci_high": 0.022
+      },
+      "hit@5": {
+        "diff": -0.015,
+        "ci_low": -0.091,
+        "ci_high": 0.058
+      },
+      "mrr": {
+        "diff": -0.045,
+        "ci_low": -0.085,
+        "ci_high": -0.008
+      }
+    },
+    "heuristic_vs_random": {
+      "hit@1": {
+        "diff": 0.0,
+        "ci_low": -0.036,
+        "ci_high": 0.033
+      },
+      "hit@3": {
+        "diff": 0.051,
+        "ci_low": -0.015,
+        "ci_high": 0.117
+      },
+      "hit@5": {
+        "diff": 0.117,
+        "ci_low": 0.033,
+        "ci_high": 0.197
+      },
+      "mrr": {
+        "diff": 0.029,
+        "ci_low": -0.006,
+        "ci_high": 0.064
+      }
+    }
+  },
   "sanity_tests": {
     "(a) Shuffled Labels within Pools": {
       "hit@1": 0.058394160583941604,
@@ -316,11 +362,11 @@
       "hit@5": 0.3357664233576642,
       "mrr": 0.22856965621564163
     },
-    "(d) Repo-Disjoint Train/Test Split": {
-      "hit@1": 0.2215909090909091,
-      "hit@3": 0.6590909090909091,
-      "hit@5": 0.9034090909090909,
-      "mrr": 0.47383658008658003
+    "(d) Clean Repo-Disjoint Split (Fixed)": {
+      "hit@1": 0.0963855421686747,
+      "hit@3": 0.25903614457831325,
+      "hit@5": 0.4036144578313253,
+      "mrr": 0.2589822493436951
     }
   }
 }

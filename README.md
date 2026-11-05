@@ -89,6 +89,15 @@ Evaluated across candidate pools with exactly **one true merged positive** per n
 | **MergeWise LightGBM (LambdaRank)** | 0.047 [0.026, 0.069] | 0.175 [0.135, 0.215] | 0.321 [0.270, 0.376] | 0.199 [0.178, 0.220] | 274 |
 | **Newest-First** | 0.036 [0.015, 0.058] | 0.168 [0.120, 0.215] | 0.292 [0.234, 0.354] | 0.198 [0.171, 0.220] | 274 |
 
+#### Paired Comparisons with Bootstrap Confidence Intervals ($\Delta = A - B$, $K = 15$)
+
+To evaluate whether performance differences are statistically meaningful, we compute per-query paired differences and 95% bootstrap confidence intervals ($N=1000$ resamples):
+
+| Paired Comparison ($\Delta = A - B$) | $\Delta$ Hit@1 (95% CI) | $\Delta$ Hit@3 (95% CI) | $\Delta$ Hit@5 (95% CI) | $\Delta$ MRR (95% CI) |
+| :--- | :---: | :---: | :---: | :---: |
+| **Heuristic vs Language-Match** | -0.062 [-0.109, -0.015] | -0.044 [-0.113, +0.022] | -0.015 [-0.091, +0.058] | -0.045 [-0.085, -0.008] |
+| **Heuristic vs Random** | +0.000 [-0.036, +0.033] | +0.051 [-0.015, +0.117] | +0.117 [+0.033, +0.197] | +0.029 [-0.006, +0.064] |
+
 #### Larger Candidate Pool Variant ($K = 50$ candidates per pool)
 
 | Ranking Method | Hit@1 (95% CI) | Hit@3 (95% CI) | Hit@5 (95% CI) | MRR (95% CI) | Test Pools |
@@ -100,20 +109,24 @@ Evaluated across candidate pools with exactly **one true merged positive** per n
 | **Random Good-First-Issue** | 0.011 [0.000, 0.022] | 0.051 [0.029, 0.080] | 0.095 [0.062, 0.128] | 0.081 [0.066, 0.097] | 274 |
 | **MergeWise LightGBM (LambdaRank)** | 0.015 [0.004, 0.029] | 0.058 [0.033, 0.088] | 0.091 [0.058, 0.128] | 0.084 [0.067, 0.102] | 274 |
 
-*Observation: The heuristic ranker performs closely on par with language matching and newest-first, demonstrating reasonable baseline ranking behavior on open candidate issues.*
+> [!NOTE]
+> **Key Finding on Model Performance**:
+> - **Learned Model Gain**: The LightGBM LambdaRank model achieves Hit@5 of 0.321 on standard candidate pools, which is effectively at the random expectation level ($\approx 5/15 = 0.333$). The learned model showed **no measurable gain** over simple heuristics on this historical GH Archive sample.
+> - **Language-Match vs Heuristic**: Language-match alone (Hit@5 0.456, MRR 0.297) performs as well as, or slightly better than, the full hand-tuned heuristic (Hit@5 0.442, MRR 0.253; paired difference $\Delta$ Hit@5 = -0.015 [-0.091, +0.058], $\Delta$ MRR = -0.045 [-0.085, -0.008]). Matching primary programming language is by far the dominant ranking signal available from public GitHub event history alone.
 
 ---
 
 ### 2. Leakage Audit & Sanity Tests
 
-To ensure results are free from lookahead leakage or synthetic data artifacts, we executed four distinct sanity checks:
+To ensure results are free from lookahead leakage or synthetic data artifacts, we executed ablation sanity checks:
 
-| Sanity Test Experiment | Hit@1 | Hit@3 | Hit@5 | MRR | Expected Behavior & Verification |
+| Sanity Test Experiment | Hit@1 | Hit@3 | Hit@5 | MRR | Finding |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **(a) Shuffled Labels within Pools** | 0.058 | 0.175 | 0.303 | 0.210 | Confirmed: metrics drop to random expectation (~5/15 = 0.33 Hit@5). |
-| **(b) Drop All User Features** | 0.073 | 0.204 | 0.296 | 0.216 | Confirmed: ranker relies purely on candidate and interaction features. |
-| **(c) Drop Repo Stars & Identifiers** | 0.073 | 0.212 | 0.336 | 0.229 | Confirmed: eliminates repository size bias. |
-| **(d) Repo-Disjoint Train/Test Split** | 0.222 | 0.659 | 0.903 | 0.474 | Confirmed: model generalizes well to unseen repositories. |
+| **(a) Shuffled Labels within Pools** | 0.058 | 0.175 | 0.303 | 0.210 | Confirmed: scores at random chance level ($\approx 5/15 = 0.333$). |
+| **(b) Drop All User Features** | 0.073 | 0.204 | 0.296 | 0.216 | Confirmed: scores at random level (~0.30), showing user features did not provide within-pool rank gain. |
+| **(c) Drop Repo Stars & Identifiers** | 0.073 | 0.212 | 0.336 | 0.229 | Confirmed: scores at random chance level (~0.34). |
+
+*(Note: Earlier preliminary table included an uncalibrated repo-split where pools were truncated after splitting, which created an artificial artifact. We have removed it.)*
 
 #### Within-Pool Feature Variance Audit
 
@@ -138,7 +151,24 @@ Features with **0.000000** within-pool variance represent user-level attributes 
 
 ---
 
-### 4. Label Noise & Limitations
+### 4. What Is NOT Evaluated from GH Archive
+
+The offline evaluation against GitHub Archive backtests candidate issue ranking under public historical event data. Several key capabilities of the live MergeWise system cannot be evaluated from GH Archive data alone:
+
+1. **Manifest & Framework Detection**:
+   - In production, MergeWise inspects repository lockfiles and manifests (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`) to extract granular frameworks and build tooling. GH Archive contains only high-level repository primary language metadata, omitting package-level compatibility.
+2. **Live Viability Checks**:
+   - The live pipeline executes on-demand pre-flight checks: issue open state verification, PR contention detection (whether an active unmerged PR already addresses the issue), recent commit vitality, and assignee checks. GH Archive snapshots do not reflect subsequent branch updates or discussion threads.
+3. **Repository Health & Maintainer Responsiveness**:
+   - MergeWise queries real-time repository health signals (median time to first maintainer response, newcomer PR merge rates). These dynamic maintainer signals require querying the live GitHub GraphQL/REST APIs over moving windows and cannot be backtested from static archive tables.
+4. **Starter Plan Generation & Effort Calibration**:
+   - The interactive plan agent (Gemini 2.0 Flash) inspects repository directory structure, parses documentation citations, and generates tailored code walkthroughs. Plan quality and beginner scaffolding are qualitative user experience features outside the scope of ranking metrics.
+5. **Dynamic User Memory & Outcome Decay**:
+   - Simulated users in GH Archive have no live feedback loop. In the deployed product, Firestore stores real-time interaction memory (issues marked `too_hard`, `pr_opened`, `viewed_plan`, or `skipped`), updating individual topic weights with 60-day half-life decay.
+
+---
+
+### 5. Label Noise & Limitations
 
 1. **Link Detection Noise**:
    - Issue linking relies on pull request body patterns (`Fixes #123`, `Closes #123`, `Resolves #123`). PRs linking issues only in subsequent comments or commit messages without body tags are missed as false negatives.
@@ -151,5 +181,6 @@ Features with **0.000000** within-pool variance represent user-level attributes 
      ```bash
      python eval/evaluate.py
      ```
+
 
 

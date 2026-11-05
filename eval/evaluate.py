@@ -11,10 +11,11 @@ Addresses all audit requirements:
    (a) Shuffled labels within pools (verifying metrics drop to random expectation ~1/K).
    (b) Drop all user-level features.
    (c) Drop repo_stars_log and repo-identifying features.
-   (d) Repo-disjoint train/test split.
+   (d) Clean repo-disjoint train/test split: splits repos upfront and builds pools strictly from each disjoint partition.
 5. Metrics: Hit@1, Hit@3, Hit@5, and MRR (since each pool has exactly 1 positive).
    Evaluates across pool sizes K=15 and K=50.
-6. Documentation: exports results.json, feature_importance.png, and benchmark_summary.md.
+6. Paired Comparisons: Heuristic vs Language-Match and Heuristic vs Random with 95% bootstrap CI on the differences.
+7. Documentation: exports results.json, feature_importance.png, and benchmark_summary.md.
 """
 import json
 import logging
@@ -321,7 +322,7 @@ def construct_evaluation_dataset(
 
 
 # ---------------------------------------------------------------------------
-# 4. Evaluation Metrics: Hit@1, Hit@3, Hit@5, MRR
+# 4. Evaluation Metrics & Paired Bootstrap
 # ---------------------------------------------------------------------------
 
 def compute_pool_metrics(
@@ -356,6 +357,66 @@ def compute_pool_metrics(
         "hit@5": float(np.mean(hit5_list)),
         "mrr": float(np.mean(mrr_list)),
     }
+
+
+def get_query_level_metrics(df: pd.DataFrame, score_col: str) -> pd.DataFrame:
+    q_metrics = {}
+    for qid, grp in df.groupby("query_id"):
+        scores = grp[score_col].to_numpy()
+        lbls = grp["label"].to_numpy()
+        order = np.argsort(scores)[::-1]
+        sorted_lbls = lbls[order]
+        pos_ranks = np.where(sorted_lbls == 1)[0]
+        if len(pos_ranks) == 0:
+            continue
+        pos_rank = pos_ranks[0] + 1
+        q_metrics[qid] = {
+            "hit@1": 1.0 if pos_rank <= 1 else 0.0,
+            "hit@3": 1.0 if pos_rank <= 3 else 0.0,
+            "hit@5": 1.0 if pos_rank <= 5 else 0.0,
+            "mrr": 1.0 / pos_rank,
+        }
+    return pd.DataFrame.from_dict(q_metrics, orient="index")
+
+
+def paired_bootstrap_difference(
+    df: pd.DataFrame,
+    score_col_a: str,
+    score_col_b: str,
+    n_bootstraps: int = 1000,
+    alpha: float = 0.05,
+    seed: int = 42,
+) -> Dict[str, Dict[str, float]]:
+    """
+    Computes paired difference (A - B) per query pool, then computes 95% bootstrap CI on the difference.
+    """
+    qm_a = get_query_level_metrics(df, score_col_a)
+    qm_b = get_query_level_metrics(df, score_col_b)
+    diff_df = qm_a - qm_b
+
+    rng = np.random.RandomState(seed)
+    n = len(diff_df)
+    arr = diff_df.to_numpy()
+    cols = diff_df.columns
+    boots = {c: [] for c in cols}
+
+    for _ in range(n_bootstraps):
+        idx = rng.randint(0, n, size=n)
+        means = np.mean(arr[idx], axis=0)
+        for i, c in enumerate(cols):
+            boots[c].append(means[i])
+
+    results = {}
+    for c in cols:
+        mean_diff = float(diff_df[c].mean())
+        low = float(np.percentile(boots[c], 100 * (alpha / 2.0)))
+        high = float(np.percentile(boots[c], 100 * (1.0 - alpha / 2.0)))
+        results[c] = {
+            "diff": round(mean_diff, 3),
+            "ci_low": round(low, 3),
+            "ci_high": round(high, 3),
+        }
+    return results
 
 
 def bootstrap_ci_metrics(
@@ -497,7 +558,11 @@ def run_evaluation():
         ci = bootstrap_ci_metrics(df_test_50, col)
         results_k50[name] = {**metrics, **ci, "pools": int(df_test_50["query_id"].nunique())}
 
-    # Step 4: Sanity Tests
+    # Step 4: Paired Comparisons with Bootstrap CI on Difference
+    paired_vs_lang = paired_bootstrap_difference(df_test_15, "heuristic_score", "lang_match_score")
+    paired_vs_rand = paired_bootstrap_difference(df_test_15, "heuristic_score", "rand_score")
+
+    # Step 5: Sanity Tests
     logger.info("Running Sanity Tests...")
     sanity_results = {}
 
@@ -531,30 +596,37 @@ def run_evaluation():
     df_test_no_stars["score_no_stars"] = ranker_no_stars.predict(df_test_15[no_stars_feats])
     sanity_results["(c) Drop Repo Stars / Identifiers"] = compute_pool_metrics(df_test_no_stars, "score_no_stars")
 
-    # (d) Repo-disjoint train/test split
-    all_repos = list(df_data_15["repo_name"].unique())
-    random.Random(42).shuffle(all_repos)
-    split_cut = int(len(all_repos) * 0.7)
-    train_repos = set(all_repos[:split_cut])
-    test_repos = set(all_repos[split_cut:])
+    # (d) Clean Repo-disjoint train/test split: split repositories first, build pools strictly within each partition
+    all_unique_repos = sorted(list(set(df_issues["repo_name"].unique()).union(set(df_prs["repo_name"].unique()))))
+    rng_rep = random.Random(42)
+    rng_rep.shuffle(all_unique_repos)
+    cut = int(len(all_unique_repos) * 0.7)
+    train_repos = set(all_unique_repos[:cut])
+    test_repos = set(all_unique_repos[cut:])
 
-    df_train_disjoint = df_data_15[df_data_15["repo_name"].isin(train_repos)].sort_values("query_id").copy()
-    df_test_disjoint = df_data_15[df_data_15["repo_name"].isin(test_repos)].sort_values("query_id").copy()
+    df_issues_tr = df_issues[df_issues["repo_name"].isin(train_repos)].copy()
+    df_prs_tr = df_prs[df_prs["repo_name"].isin(train_repos)].copy()
+    df_issues_te = df_issues[df_issues["repo_name"].isin(test_repos)].copy()
+    df_prs_te = df_prs[df_prs["repo_name"].isin(test_repos)].copy()
 
-    valid_test_qids = [qid for qid, grp in df_test_disjoint.groupby("query_id") if (grp["label"] == 1).sum() == 1 and (grp["label"] == 0).sum() >= 2]
-    df_test_disjoint = df_test_disjoint[df_test_disjoint["query_id"].isin(valid_test_qids)]
+    df_tr_clean_disjoint = construct_evaluation_dataset(df_issues_tr, df_prs_tr, df_events, candidate_pool_size=15, seed=42)
+    df_te_clean_disjoint = construct_evaluation_dataset(df_issues_te, df_prs_te, df_events, candidate_pool_size=15, seed=42)
 
-    grp_tr_dis = df_train_disjoint.groupby("query_id").size().to_list()
-    train_dis_data = lgb.Dataset(df_train_disjoint[feat_names], label=df_train_disjoint["label"], group=grp_tr_dis)
-    ranker_disjoint = lgb.train(params, train_dis_data, num_boost_round=60)
-    df_test_disjoint["score_disjoint"] = ranker_disjoint.predict(df_test_disjoint[feat_names])
-    sanity_results["(d) Repo-Disjoint Train/Test Split"] = compute_pool_metrics(df_test_disjoint, "score_disjoint")
+    grp_tr_clean = df_tr_clean_disjoint.groupby("query_id").size().to_list()
+    tr_clean_data = lgb.Dataset(df_tr_clean_disjoint[feat_names], label=df_tr_clean_disjoint["label"], group=grp_tr_clean)
+    ranker_clean_disjoint = lgb.train(params, tr_clean_data, num_boost_round=60)
+    df_te_clean_disjoint["score_disjoint"] = ranker_clean_disjoint.predict(df_te_clean_disjoint[feat_names])
+    sanity_results["(d) Clean Repo-Disjoint Split (Fixed)"] = compute_pool_metrics(df_te_clean_disjoint, "score_disjoint")
 
-    # Step 5: Save Results JSON
+    # Step 6: Save Results JSON
     output_payload = {
         "within_pool_variance": variance_report,
         "k15_results": results_k15,
         "k50_results": results_k50,
+        "paired_comparisons": {
+            "heuristic_vs_language_match": paired_vs_lang,
+            "heuristic_vs_random": paired_vs_rand,
+        },
         "sanity_tests": sanity_results,
     }
 
@@ -563,7 +635,7 @@ def run_evaluation():
         json.dump(output_payload, f, indent=2)
     logger.info(f"Saved evaluation results to {results_path}")
 
-    # Step 6: Feature Importance Chart
+    # Step 7: Feature Importance Chart
     importance = ranker_15.feature_importance(importance_type="gain")
     sorted_idx = np.argsort(importance)
 
@@ -577,7 +649,7 @@ def run_evaluation():
     plt.close()
     logger.info(f"Saved feature importance chart to {chart_path}")
 
-    # Step 7: Markdown Benchmark Summary
+    # Step 8: Markdown Benchmark Summary
     summary_path = os.path.join("eval", "benchmark_summary.md")
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write("# MergeWise Phase 5 Evaluation Benchmark (Audited)\n\n")
@@ -591,7 +663,15 @@ def run_evaluation():
             mrr = f"{d['mrr']:.3f} [{d['mrr_ci'][0]:.3f}, {d['mrr_ci'][1]:.3f}]"
             f.write(f"| **{m}** | {h1} | {h3} | {h5} | {mrr} | {d['pools']} |\n")
 
-        f.write("\n### 2. Large Candidate Pool ($K=50$ candidates per pool, 1 positive)\n\n")
+        f.write("\n### 2. Paired Comparisons with Bootstrap CI on Difference ($K=15$)\n\n")
+        f.write("| Paired Comparison ($\Delta = A - B$) | $\Delta$ Hit@1 (95% CI) | $\Delta$ Hit@3 (95% CI) | $\Delta$ Hit@5 (95% CI) | $\Delta$ MRR (95% CI) |\n")
+        f.write("| :--- | :---: | :---: | :---: | :---: |\n")
+        vl = paired_vs_lang
+        vr = paired_vs_rand
+        f.write(f"| **Heuristic vs Language-Match** | {vl['hit@1']['diff']:+.3f} [{vl['hit@1']['ci_low']:+.3f}, {vl['hit@1']['ci_high']:+.3f}] | {vl['hit@3']['diff']:+.3f} [{vl['hit@3']['ci_low']:+.3f}, {vl['hit@3']['ci_high']:+.3f}] | {vl['hit@5']['diff']:+.3f} [{vl['hit@5']['ci_low']:+.3f}, {vl['hit@5']['ci_high']:+.3f}] | {vl['mrr']['diff']:+.3f} [{vl['mrr']['ci_low']:+.3f}, {vl['mrr']['ci_high']:+.3f}] |\n")
+        f.write(f"| **Heuristic vs Random** | {vr['hit@1']['diff']:+.3f} [{vr['hit@1']['ci_low']:+.3f}, {vr['hit@1']['ci_high']:+.3f}] | {vr['hit@3']['diff']:+.3f} [{vr['hit@3']['ci_low']:+.3f}, {vr['hit@3']['ci_high']:+.3f}] | {vr['hit@5']['diff']:+.3f} [{vr['hit@5']['ci_low']:+.3f}, {vr['hit@5']['ci_high']:+.3f}] | {vr['mrr']['diff']:+.3f} [{vr['mrr']['ci_low']:+.3f}, {vr['mrr']['ci_high']:+.3f}] |\n")
+
+        f.write("\n### 3. Large Candidate Pool ($K=50$ candidates per pool, 1 positive)\n\n")
         f.write("| Ranking Method | Hit@1 (95% CI) | Hit@3 (95% CI) | Hit@5 (95% CI) | MRR (95% CI) | Test Pools |\n")
         f.write("| :--- | :---: | :---: | :---: | :---: | :---: |\n")
         for m, d in results_k50.items():
@@ -601,14 +681,14 @@ def run_evaluation():
             mrr = f"{d['mrr']:.3f} [{d['mrr_ci'][0]:.3f}, {d['mrr_ci'][1]:.3f}]"
             f.write(f"| **{m}** | {h1} | {h3} | {h5} | {mrr} | {d['pools']} |\n")
 
-        f.write("\n### 3. Leakage Sanity Tests ($K=15$)\n\n")
+        f.write("\n### 4. Leakage Sanity Tests ($K=15$)\n\n")
         f.write("| Sanity Test Experiment | Hit@1 | Hit@3 | Hit@5 | MRR | Expected Behavior |\n")
         f.write("| :--- | :---: | :---: | :---: | :---: | :--- |\n")
         for test_name, m_dict in sanity_results.items():
             exp = "Drops to random baseline (~0.33)" if "Shuffled" in test_name else "Retains signal without user features"
             f.write(f"| {test_name} | {m_dict['hit@1']:.3f} | {m_dict['hit@3']:.3f} | {m_dict['hit@5']:.3f} | {m_dict['mrr']:.3f} | {exp} |\n")
 
-        f.write("\n### 4. Feature Variance Audit\n\n")
+        f.write("\n### 5. Feature Variance Audit\n\n")
         f.write("| Feature | Mean Within-Pool Variance | Notes |\n")
         f.write("| :--- | :---: | :--- |\n")
         for fname, var_val in variance_report.items():
