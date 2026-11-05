@@ -27,7 +27,7 @@ flowchart TD
 
         subgraph AI_Engine ["AI & Match Engine"]
             SharedFeat["Shared Feature Package\n(mergewise-features)"]
-            Gemini["Vertex AI Gemini 2.0 Flash\n(Tool Calling & Starter Plans)"]
+            Gemini["Vertex AI Gemini\ngemini-3.8-flash\n(Tool Calling & Starter Plans)"]
             Ranker["LightGBM ML Ranker / Heuristics"]
         end
 
@@ -110,9 +110,15 @@ To evaluate whether performance differences are statistically meaningful, we com
 | **MergeWise LightGBM (LambdaRank)** | 0.015 [0.004, 0.029] | 0.058 [0.033, 0.088] | 0.091 [0.058, 0.128] | 0.084 [0.067, 0.102] | 274 |
 
 > [!NOTE]
-> **Key Finding on Model Performance**:
+> **Key Findings on Model Performance & Metric Interpretations**:
 > - **Learned Model Gain**: The LightGBM LambdaRank model achieves Hit@5 of 0.321 on standard candidate pools, which is effectively at the random expectation level ($\approx 5/15 = 0.333$). The learned model showed **no measurable gain** over simple heuristics on this historical GH Archive sample.
-> - **Language-Match vs Heuristic**: Language-match alone (Hit@5 0.456, MRR 0.297) performs as well as, or slightly better than, the full hand-tuned heuristic (Hit@5 0.442, MRR 0.253; paired difference $\Delta$ Hit@5 = -0.015 [-0.091, +0.058], $\Delta$ MRR = -0.045 [-0.085, -0.008]). Matching primary programming language is by far the dominant ranking signal available from public GitHub event history alone.
+> - **Heuristic vs Language-Match**: Reporting all metrics honestly across the paired differences:
+>   - **Hit@1** (-0.062 [95% CI -0.109, -0.015]) and **MRR** (-0.045 [95% CI -0.085, -0.008]) favor language-match alone over the heuristic ranker.
+>   - **Hit@3** (-0.044 [95% CI -0.113, +0.022]) and **Hit@5** (-0.015 [95% CI -0.091, +0.058]) show no statistically significant difference.
+>   - *Context*: This historical GH Archive backtest only sees coarse primary language and cannot test the manifest/framework matching, pre-flight live viability, repository maintainer health, or dynamic outcome memory features present in the live system.
+> - **Heuristic vs Random Selection**:
+>   - The heuristic ranker provides **+11.7 percentage points Hit@5 over random** (95% CI +3.3 to +19.7); there is **no significant gain at Hit@1 or MRR** ($\Delta$ Hit@1: +0.000 [-0.036, +0.033], $\Delta$ MRR: +0.029 [-0.006, +0.064]).
+
 
 ---
 
@@ -162,7 +168,7 @@ The offline evaluation against GitHub Archive backtests candidate issue ranking 
 3. **Repository Health & Maintainer Responsiveness**:
    - MergeWise queries real-time repository health signals (median time to first maintainer response, newcomer PR merge rates). These dynamic maintainer signals require querying the live GitHub GraphQL/REST APIs over moving windows and cannot be backtested from static archive tables.
 4. **Starter Plan Generation & Effort Calibration**:
-   - The interactive plan agent (Gemini 2.0 Flash) inspects repository directory structure, parses documentation citations, and generates tailored code walkthroughs. Plan quality and beginner scaffolding are qualitative user experience features outside the scope of ranking metrics.
+   - The interactive plan agent (`gemini-3.8-flash`, configured via `GEMINI_MODEL_ID`) inspects repository directory structure, parses documentation citations, and generates tailored code walkthroughs. Plan quality and beginner scaffolding are qualitative user experience features outside the scope of ranking metrics.
 5. **Dynamic User Memory & Outcome Decay**:
    - Simulated users in GH Archive have no live feedback loop. In the deployed product, Firestore stores real-time interaction memory (issues marked `too_hard`, `pr_opened`, `viewed_plan`, or `skipped`), updating individual topic weights with 60-day half-life decay.
 
