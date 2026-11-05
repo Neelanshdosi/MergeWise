@@ -206,12 +206,14 @@ def find_matching_dependencies(user_frameworks: List[str], repo_frameworks: List
 
 
 class ScoreResult(tuple):
-    """Subclass of 2-tuple (score, reason) providing .breakdown attribute."""
-    def __new__(cls, score: float, reason: str, breakdown: dict):
+    """Subclass of 2-tuple (score, reason) providing .breakdown, .memory_adjustment, and .base_score attributes."""
+    def __new__(cls, score: float, reason: str, breakdown: dict, memory_adjustment: float = 0.0, base_score: float = 0.0):
         obj = super().__new__(cls, (score, reason))
         obj.score = score
         obj.reason = reason
         obj.breakdown = breakdown
+        obj.memory_adjustment = memory_adjustment
+        obj.base_score = base_score
         return obj
 
 
@@ -294,11 +296,13 @@ def score_candidate_issue(
     features: CandidateFeatureVector,
     dep_counts: Optional[Dict[str, int]] = None,
     total_candidates: Optional[int] = None,
+    skill_weights: Optional[Dict[str, float]] = None,
 ) -> ScoreResult:
     """
     PFIRec-aligned multi-factor ranker with score variance and specific truthful reasons.
     Produces discriminating scores across issues and returns detailed feature breakdown.
     Weights domain matches using inverse frequency across candidate pool (rarer-is-stronger).
+    Optionally applies dynamic skill_weights derived from historical user outcomes.
     """
     # 1. Language familiarity component (0.0 to 0.35)
     lang_score = (features.lang_match * 0.20) + (features.lang_commit_share * 0.15)
@@ -363,9 +367,43 @@ def score_candidate_issue(
         elif issue.days_since_push <= 90:
             repo_score += 0.02
 
-    # Total score calculation with natural variance
-    raw_score = lang_score + domain_score + label_score + content_score + repo_score
-    final_score = round(min(0.98, max(0.10, raw_score)), 3)
+    # 6. Dynamic memory-based skill adjustment from outcomes
+    memory_adjustment = 0.0
+    if skill_weights:
+        # Check language
+        if issue.primary_language:
+            lang_key = f"lang:{issue.primary_language.lower()}"
+            memory_adjustment += skill_weights.get(lang_key, 0.0)
+
+        # Check frameworks
+        for fw in getattr(issue, "matching_frameworks", []) or []:
+            fw_key = f"fw:{fw.lower().strip()}"
+            memory_adjustment += skill_weights.get(fw_key, 0.0)
+
+        # Check repo
+        if issue.repo_full_name:
+            repo_key = f"repo:{issue.repo_full_name.lower().strip()}"
+            memory_adjustment += skill_weights.get(repo_key, 0.0)
+
+        # Check issue type
+        labels_lower = [l.lower() for l in issue.labels]
+        if any("bug" in l or "defect" in l for l in labels_lower):
+            memory_adjustment += skill_weights.get("type:bug", 0.0)
+        elif any("doc" in l or "documentation" in l for l in labels_lower):
+            memory_adjustment += skill_weights.get("type:docs", 0.0)
+        elif any("enhancement" in l or "feature" in l for l in labels_lower):
+            memory_adjustment += skill_weights.get("type:enhancement", 0.0)
+
+        # Clamp total memory adjustment to [-0.3, +0.3]
+        memory_adjustment = max(-0.3, min(0.3, memory_adjustment))
+
+    # Base score without memory adjustment (exposed for offline eval)
+    raw_base_score = lang_score + domain_score + label_score + content_score + repo_score
+    base_score = round(min(0.98, max(0.05, raw_base_score)), 3)
+
+    # Total score calculation with natural variance and memory adjustment
+    raw_score = raw_base_score + memory_adjustment
+    final_score = round(min(0.98, max(0.05, raw_score)), 3)
 
     breakdown = {
         "language_familiarity": round(lang_score, 3),
@@ -373,6 +411,8 @@ def score_candidate_issue(
         "labels_accessibility": round(label_score, 3),
         "issue_clarity_scoping": round(content_score, 3),
         "repo_health_recency": round(repo_score, 3),
+        "base_score": base_score,
+        "memory_adjustment": round(memory_adjustment, 3),
     }
 
     # Construct truthful, issue-specific explanation (Rules 1, 2, 3)
@@ -448,4 +488,4 @@ def score_candidate_issue(
         reasons.append(f"{issue.stars:,} stars")
 
     one_line_reason = "; ".join(reasons) if reasons else "Viable open issue with clear specifications."
-    return ScoreResult(final_score, one_line_reason, breakdown)
+    return ScoreResult(final_score, one_line_reason, breakdown, memory_adjustment=memory_adjustment, base_score=base_score)

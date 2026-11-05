@@ -142,6 +142,8 @@ class ScoredIssueCandidate(BaseModel):
     one_line_reason: str
     viability_verified: bool = True
     score_breakdown: Optional[Dict[str, float]] = None
+    memory_adjustment: float = 0.0
+    base_score: Optional[float] = None
 
 
 class ResourceRateLimit(BaseModel):

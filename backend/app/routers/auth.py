@@ -1,9 +1,10 @@
 import logging
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from ..auth.dependencies import AuthenticatedUser, get_current_user
+from ..services.memory import delete_all_user_data
 
 logger = logging.getLogger("mergewise.routers.auth")
 router = APIRouter(prefix="/api", tags=["Auth"])
@@ -44,4 +45,28 @@ async def get_me(user: AuthenticatedUser = Depends(get_current_user)):
         authorized_party=claims.get("azp"),
         issuer=claims.get("iss"),
         auth_status="authenticated",
+    )
+
+
+class DeleteDataResponse(BaseModel):
+    success: bool
+    message: str
+
+
+@router.delete("/me/data", response_model=DeleteDataResponse)
+async def delete_my_data(user: AuthenticatedUser = Depends(get_current_user)):
+    """
+    Purges the authenticated user's entire document tree in Firestore,
+    including outcomes, recommendations log, and profile data.
+    Stores no GitHub tokens. Uid is strictly derived from verified JWT.
+    """
+    success = await delete_all_user_data(user.user_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to purge user data from database.",
+        )
+    return DeleteDataResponse(
+        success=True,
+        message="All personal profile data, issue outcomes, and recommendations history have been permanently deleted.",
     )

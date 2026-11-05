@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -5,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ..auth.dependencies import AuthenticatedUser, get_current_user_optional
 from ..services.github import GitHubClient
 from ..agent.gemini import GeminiPlanAgent, IssuePlanRequest, IssuePlanResponse
+from ..services.memory import record_outcome, OutcomeType
 
 logger = logging.getLogger("mergewise.routers.plan")
 router = APIRouter(prefix="/api", tags=["Plan"])
@@ -44,4 +46,19 @@ async def generate_issue_plan(
     gh_client = GitHubClient(token=github_token)
     agent = GeminiPlanAgent(target_repo=req.repo_full_name, gh_client=gh_client, user_id=user_id)
 
-    return await agent.generate_plan(req)
+    plan_response = await agent.generate_plan(req)
+
+    # Record viewed_plan outcome if authenticated user opened plan
+    if current_user and current_user.user_id:
+        asyncio.create_task(
+            record_outcome(
+                user_id=current_user.user_id,
+                repo_full_name=req.repo_full_name,
+                issue_number=req.issue_number,
+                issue_title=req.title,
+                outcome=OutcomeType.VIEWED_PLAN,
+                labels=req.labels,
+            )
+        )
+
+    return plan_response

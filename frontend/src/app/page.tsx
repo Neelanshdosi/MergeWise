@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useAuth, useUser, SignInButton, SignedIn, SignedOut } from "@clerk/nextjs";
-import { fetchUserProfile, fetchRecommendations, submitColdStart } from "@/lib/api";
+import { fetchUserProfile, fetchRecommendations, submitColdStart, deleteMyData } from "@/lib/api";
 import { UserProfileResponse, RecommendationsResponse, ColdStartQuestionnaire } from "@/lib/types";
 import IssueCard from "@/components/IssueCard";
 import ColdStartModal from "@/components/ColdStartModal";
@@ -17,6 +17,9 @@ export default function HomePage() {
   const [showColdStartOverride, setShowColdStartOverride] = useState<boolean>(false);
   const [showQueriesDrawer, setShowQueriesDrawer] = useState<boolean>(false);
   const [refreshCooldown, setRefreshCooldown] = useState<number>(0);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+  const [isDeletingData, setIsDeletingData] = useState<boolean>(false);
+  const [deleteSuccessMsg, setDeleteSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (refreshCooldown <= 0) return;
@@ -67,6 +70,24 @@ export default function HomePage() {
       setError(err.message || "Failed to update preferences.");
     } finally {
       setLoadingRecs(false);
+    }
+  };
+
+  const handleDeleteMyData = async () => {
+    setIsDeletingData(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Missing session token.");
+      await deleteMyData(token);
+      setShowDeleteConfirm(false);
+      setDeleteSuccessMsg("All your profile, issue outcomes, and recommendations data have been permanently deleted.");
+      setTimeout(() => setDeleteSuccessMsg(null), 6000);
+      // Reload recommendations cleanly without previous history
+      await loadData(true);
+    } catch (err: any) {
+      setError(err.message || "Failed to delete user data.");
+    } finally {
+      setIsDeletingData(false);
     }
   };
 
@@ -155,7 +176,15 @@ export default function HomePage() {
                 </p>
               </div>
 
-              <div style={{ display: "flex", gap: "10px" }}>
+              <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="btn-secondary"
+                  style={{ fontSize: "0.85rem", padding: "8px 12px", color: "#f87171", borderColor: "rgba(248, 113, 113, 0.3)" }}
+                  title="Purges all outcomes, memory, and personal documents from database"
+                >
+                  🗑 Delete my data
+                </button>
                 <button
                   onClick={() => setShowColdStartOverride(!showColdStartOverride)}
                   className="btn-secondary"
@@ -406,16 +435,109 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* Recommendations Header */}
-          <div style={{ marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h2 style={{ fontSize: "1.4rem", fontWeight: 700 }}>
-                Top 5 Recommended Issues for You
-              </h2>
-              <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                Ranked using PFIRec-aligned features & verified unassigned with no competing PRs.
-              </p>
+          {/* Delete Data Confirmation Modal */}
+          {showDeleteConfirm && (
+            <div style={{
+              position: "fixed",
+              inset: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.75)",
+              backdropFilter: "blur(4px)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 9999,
+              padding: "20px",
+            }}>
+              <div className="glass-panel" style={{
+                maxWidth: "480px",
+                width: "100%",
+                padding: "24px",
+                borderRadius: "var(--radius-md)",
+                border: "1px solid rgba(248, 113, 113, 0.4)",
+              }}>
+                <h3 style={{ fontSize: "1.3rem", fontWeight: 700, color: "#f87171", marginBottom: "12px" }}>
+                  Delete All Your Data?
+                </h3>
+                <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", lineHeight: 1.5, marginBottom: "20px" }}>
+                  This action is permanent and cannot be undone. It removes your skill profile, all issue outcomes (skipped, attempted, PRs, etc.), and recommendations telemetry from our database.
+                </p>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                  <button
+                    onClick={() => setShowDeleteConfirm(false)}
+                    className="btn-secondary"
+                    disabled={isDeletingData}
+                    style={{ padding: "8px 16px", fontSize: "0.85rem" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleDeleteMyData}
+                    style={{
+                      padding: "8px 18px",
+                      fontSize: "0.85rem",
+                      borderRadius: "var(--radius-sm)",
+                      backgroundColor: "#ef4444",
+                      color: "#fff",
+                      border: "none",
+                      fontWeight: 600,
+                      cursor: isDeletingData ? "not-allowed" : "pointer",
+                    }}
+                    disabled={isDeletingData}
+                  >
+                    {isDeletingData ? "Deleting..." : "Yes, Delete Everything"}
+                  </button>
+                </div>
+              </div>
             </div>
+          )}
+
+          {/* Delete Success Alert */}
+          {deleteSuccessMsg && (
+            <div style={{
+              padding: "16px",
+              borderRadius: "var(--radius-sm)",
+              backgroundColor: "rgba(16, 185, 129, 0.15)",
+              border: "1px solid rgba(16, 185, 129, 0.3)",
+              color: "#6ee7b7",
+              marginBottom: "24px",
+            }}>
+              ✓ {deleteSuccessMsg}
+            </div>
+          )}
+
+          {/* Recommendations Header */}
+          <div style={{ marginBottom: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h2 style={{ fontSize: "1.4rem", fontWeight: 700 }}>
+                  Top 5 Recommended Issues for You
+                </h2>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                  Ranked using PFIRec-aligned features & verified unassigned with no competing PRs.
+                </p>
+              </div>
+            </div>
+
+            {/* Why these results note (Phase 4 requirement 4) */}
+            {recData?.why_these_results && (
+              <div style={{
+                marginTop: "12px",
+                padding: "10px 14px",
+                borderRadius: "var(--radius-sm)",
+                backgroundColor: "rgba(99, 102, 241, 0.12)",
+                border: "1px solid rgba(99, 102, 241, 0.25)",
+                fontSize: "0.82rem",
+                color: "#c7d2fe",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}>
+                <span style={{ fontSize: "1rem" }}>💡</span>
+                <span>
+                  <strong>Why these results:</strong> {recData.why_these_results}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Loading Indicator */}

@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from mergewise_features import (
     UserSkillProfile,
@@ -17,10 +17,11 @@ def rank_viable_issues(
     candidates: List[IssueMetadata],
     top_k: int = 5,
     max_per_repo: int = 2,
+    skill_weights: Optional[Dict[str, float]] = None,
 ) -> List[ScoredIssueCandidate]:
     """
     Ranks viable candidates using the shared PFIRec-aligned feature vector,
-    heuristic scoring formula, and diversity constraint (at most max_per_repo per repo).
+    heuristic scoring formula, dynamic memory skill weights, and diversity constraint.
     """
     # Count occurrences of dependencies across candidate pool for inverse frequency weighting (rarer-is-stronger)
     dep_counts: Dict[str, int] = {}
@@ -43,10 +44,13 @@ def rank_viable_issues(
             features,
             dep_counts=dep_counts,
             total_candidates=total_candidates,
+            skill_weights=skill_weights,
         )
         score = score_res[0]
         reason = score_res[1]
         breakdown = getattr(score_res, "breakdown", None)
+        mem_adj = getattr(score_res, "memory_adjustment", 0.0)
+        base_score = getattr(score_res, "base_score", None)
 
         scored_list.append(
             ScoredIssueCandidate(
@@ -56,6 +60,8 @@ def rank_viable_issues(
                 one_line_reason=reason,
                 viability_verified=True,
                 score_breakdown=breakdown,
+                memory_adjustment=mem_adj,
+                base_score=base_score,
             )
         )
 

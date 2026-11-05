@@ -17,6 +17,13 @@ logger = logging.getLogger("mergewise.agent.gemini")
 # Global in-memory cache for generated plans: cache_key -> (IssuePlanResponse, expires_at)
 _PLAN_CACHE: Dict[str, tuple[Any, float]] = {}
 
+
+def clear_user_plan_cache(user_id: str) -> None:
+    """Clears all in-memory cached plans for user_id."""
+    keys_to_remove = [k for k in _PLAN_CACHE.keys() if f":{user_id}:" in k or k.startswith(f"plan:{user_id}:")]
+    for k in keys_to_remove:
+        _PLAN_CACHE.pop(k, None)
+
 # Per-user concurrency locks and cooldown tracking to prevent rapid clicks firing parallel LLM requests
 _USER_LOCKS: Dict[str, asyncio.Lock] = {}
 _USER_LAST_CALL: Dict[str, float] = {}

@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     )
     GCP_PROJECT_ID: Optional[str] = Field(default=None)
     GCP_LOCATION: str = Field(default="us-central1")
+    FIRESTORE_DATABASE_ID: str = Field(
+        default="(default)",
+        description="Firestore database ID. Must already exist — never created by the app.",
+    )
 
     def get_gemini_model_id(self) -> str:
         if not self.GEMINI_MODEL_ID:

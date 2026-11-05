@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone, timedelta
@@ -9,6 +10,13 @@ from ..auth.dependencies import AuthenticatedUser, get_current_user
 from ..services.github import GitHubClient, GitHubRateLimitError
 from ..services.profiler import build_user_profile
 from ..services.viability import check_issue_viability
+from ..services.memory import (
+    save_user_profile,
+    load_user_profile,
+    get_user_outcomes,
+    derive_skill_weights_and_excluded_issues,
+    log_shown_recommendations,
+)
 from ..ranker.heuristic import rank_viable_issues
 from mergewise_features.schemas import (
     UserSkillProfile,
@@ -30,6 +38,13 @@ _LAST_GOOD_PROFILE_STORE: Dict[str, UserSkillProfile] = {}
 _LAST_GOOD_RECOMMENDATIONS_STORE: Dict[str, List[ScoredIssueCandidate]] = {}
 _LAST_GOOD_STATS_STORE: Dict[str, PipelineStats] = {}
 
+
+def clear_user_recommendations_cache(user_id: str) -> None:
+    """Clears all in-memory profile, recommendation, and stats caches for user_id."""
+    _LAST_GOOD_PROFILE_STORE.pop(user_id, None)
+    _LAST_GOOD_RECOMMENDATIONS_STORE.pop(user_id, None)
+    _LAST_GOOD_STATS_STORE.pop(user_id, None)
+
 MAX_SEARCH_CALLS_PER_REQUEST = 8
 
 
@@ -41,6 +56,7 @@ class RecommendationsResponse(BaseModel):
     total_viable: int = 0
     rejected_stats: Dict[str, int] = {}
     pipeline_stats: PipelineStats
+    why_these_results: Optional[str] = None
 
 
 @router.get("/profile", response_model=UserSkillProfile)
@@ -65,11 +81,20 @@ async def get_user_skill_profile(
     try:
         profile = await build_user_profile(client, username=username or "developer", cold_start_answers=cold_start_answers)
         _LAST_GOOD_PROFILE_STORE[user.user_id] = profile
+        # Phase 4: persist built profile to Firestore (best-effort, non-blocking)
+        asyncio.create_task(save_user_profile(user.user_id, profile.model_dump()))
         return profile
     except Exception as e:
         logger.warning(f"Failed to build fresh profile for {user.user_id}: {e}")
         if user.user_id in _LAST_GOOD_PROFILE_STORE:
             return _LAST_GOOD_PROFILE_STORE[user.user_id]
+        # Phase 4: Try loading from Firestore as last resort
+        fs_profile_data = await load_user_profile(user.user_id)
+        if fs_profile_data:
+            try:
+                return UserSkillProfile(**fs_profile_data)
+            except Exception:
+                pass
         return UserSkillProfile(username=username or "developer")
 
 
@@ -164,9 +189,20 @@ async def get_recommended_issues(
     try:
         profile = await build_user_profile(client, username=username or "developer", cold_start_answers=cold_start_answers)
         _LAST_GOOD_PROFILE_STORE[user.user_id] = profile
+        # Phase 4: persist built profile to Firestore (best-effort, non-blocking)
+        asyncio.create_task(save_user_profile(user.user_id, profile.model_dump()))
     except Exception as e:
         logger.warning(f"Profile build fallback: {e}")
-        profile = _LAST_GOOD_PROFILE_STORE.get(user.user_id) or UserSkillProfile(username=username or "developer")
+        profile = _LAST_GOOD_PROFILE_STORE.get(user.user_id)
+        if profile is None:
+            # Phase 4: Try loading from Firestore as last resort
+            fs_data = await load_user_profile(user.user_id)
+            if fs_data:
+                try:
+                    profile = UserSkillProfile(**fs_data)
+                except Exception:
+                    pass
+        profile = profile or UserSkillProfile(username=username or "developer")
 
     stats = PipelineStats(
         queries_run=[],
@@ -349,6 +385,18 @@ async def get_recommended_issues(
     # --------------------------------------------------------------------------
     # FAST FILTER & PRE-RANKING (RULE 5: Limit timeline/comment calls to top 25)
     # --------------------------------------------------------------------------
+    # Phase 4 Memory: Load historical outcomes to derive dynamic skill weights & excluded issues
+    skill_weights: Dict[str, float] = {}
+    excluded_issues: Set[str] = set()
+    why_these_results: Optional[str] = None
+    try:
+        user_outcomes = await get_user_outcomes(user.user_id, limit=100)
+        skill_weights, excluded_issues, why_these_results = derive_skill_weights_and_excluded_issues(user_outcomes)
+        if excluded_issues:
+            logger.info(f"Memory exclusion active: filtering out {len(excluded_issues)} historical issues for {user.user_id}")
+    except Exception as e:
+        logger.warning(f"Could not load memory outcomes for {user.user_id}: {e}")
+
     surviving_fast_candidates: List[Dict[str, Any]] = []
 
     for item in all_raw_candidates:
@@ -361,6 +409,18 @@ async def get_recommended_issues(
         if item.get("assignee") is not None or len(item.get("assignees") or []) > 0:
             stats.rejected_by_reason[ViabilityRejectionReason.ALREADY_ASSIGNED.value] += 1
             continue
+
+        # Phase 4 Memory: Check if issue was already skipped, attempted, pr_opened, merged, abandoned or too_hard (<30d)
+        repo_url = item.get("repository_url", "")
+        repo_parts = repo_url.split("/")
+        repo_name = f"{repo_parts[-2]}/{repo_parts[-1]}" if len(repo_parts) >= 2 else "repo"
+        issue_num = item.get("number", 0)
+        cand_key = f"{repo_name}#{issue_num}"
+        if cand_key in excluded_issues:
+            stats.rejected_by_reason["MEMORY_EXCLUDED"] = stats.rejected_by_reason.get("MEMORY_EXCLUDED", 0) + 1
+            logger.info(f"Issue #{issue_num} on {repo_name} filtered out by memory outcome exclusion")
+            continue
+
         surviving_fast_candidates.append(item)
 
     search_langs_lower = {l.lower() for l in search_langs}
@@ -500,8 +560,27 @@ async def get_recommended_issues(
         )
         viable_metadata_list.append(meta)
 
-    # Final ranking with shared feature extractor and repo diversity (max 2 per repo)
-    ranked_recommendations = rank_viable_issues(profile, viable_metadata_list, top_k=5, max_per_repo=2)
+    # Final ranking with shared feature extractor, memory skill weights, and repo diversity (max 2 per repo)
+    ranked_recommendations = rank_viable_issues(
+        profile,
+        viable_metadata_list,
+        top_k=5,
+        max_per_repo=2,
+        skill_weights=skill_weights,
+    )
+
+    # Phase 4 Requirement 2 & Follow-up 2: Await log_shown_recommendations before returning response
+    # to avoid logs being lost when Cloud Run throttles CPU after response.
+    # Log a warning on failure but do not fail the request.
+    if ranked_recommendations:
+        try:
+            await log_shown_recommendations(
+                user_id=user.user_id,
+                recommendations=ranked_recommendations,
+                relaxation_stage=stats.relaxation_used or "Standard (90d)",
+            )
+        except Exception as e:
+            logger.warning(f"Could not log shown recommendations for user {user.user_id}: {e}")
 
     # RULE A: Clear rate limit notice and ensure is_limited=False when search remaining > 0
     if client.rate_limits["search"].remaining > 0:
@@ -535,4 +614,5 @@ async def get_recommended_issues(
         total_viable=len(ranked_recommendations),
         rejected_stats=stats.rejected_by_reason,
         pipeline_stats=stats,
+        why_these_results=why_these_results,
     )
