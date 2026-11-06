@@ -1,0 +1,16 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-south1-docker.pkg.dev/oss-match/mergewise-repo/mergewise-frontend:latest'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_API_URL=https://mergewise-backend-708575763180.asia-south1.run.app'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_bXV0dWFsLXBhbnRoZXItNjU5NS5jbGVyay5hY2NvdW50cy5kZXYk'
+      - '.'
+    dir: 'frontend'
+
+images:
+  - 'asia-south1-docker.pkg.dev/oss-match/mergewise-repo/mergewise-frontend:latest'
+

@@ -1,0 +1,13 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-south1-docker.pkg.dev/oss-match/mergewise-repo/mergewise-backend:latest'
+      - '-f'
+      - 'backend/Dockerfile'
+      - '.'
+
+images:
+  - 'asia-south1-docker.pkg.dev/oss-match/mergewise-repo/mergewise-backend:latest'
+
