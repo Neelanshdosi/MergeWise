@@ -58,8 +58,9 @@ python deploy/smoke_test.py
   - Exceeding `RATE_LIMIT_PLAN_PER_MINUTE` (default: 5/min) returns `HTTP 429`.
   - Exceeding `GEMINI_USER_DAILY_CAP` (default: 20/day) returns `HTTP 429` with daily reset notice.
   - Exceeding `GEMINI_GLOBAL_DAILY_CAP` (default: 500/day) returns `HTTP 429` with global quota notice.
-- [ ] **Firestore Persistence**:
-  - Verify documents are recorded in Firestore Native mode under `users/{user_id}/rate_limits/` and `rate_limits/`.
+- [ ] **Firestore Persistence & TTL**:
+  - Verify documents are recorded in Firestore Native mode under the top-level `rate_limits/` collection.
+  - Verify documents contain `expires_at` timestamp field for automatic TTL cleanup.
 
 ---
 
@@ -105,3 +106,4 @@ python deploy/smoke_test.py
   - **Expected Value**: `3` for both services.
 - [ ] **Scale to Zero**:
   - When idle, container instance counts drop to 0.
+

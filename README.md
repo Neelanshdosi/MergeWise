@@ -26,7 +26,7 @@ flowchart TD
         end
 
         subgraph DistributedQuota ["Distributed Quota & State (Cloud Firestore asia-south1)"]
-            FSRateLimit["Firestore Distributed Rate Limiter\n- User Minute Quota (rec: 10/min, plan: 5/min)\n- User Daily Cap (20/day)\n- Global Daily Cap (500/day)"]
+            FSRateLimit["Firestore Distributed Rate Limiter\n(rate_limits top-level collection)\n- User Minute Quota (rec: 10/min, plan: 5/min)\n- User Daily Cap (20/day)\n- Global Daily Cap (500/day)\n- expires_at TTL field"]
             FSMemory["Firestore Tenant Store\n- User Profiles (users/{uid})\n- Outcome Memory (users/{uid}/outcomes)\n- 60-day half-life decay"]
         end
 
@@ -140,17 +140,17 @@ MergeWise enforces multi-layer enterprise security standards across identity, to
   - `sub`: Identifies the immutable Clerk User ID.
 
 ### 2. Zero-Leak Token Handling & Logging Redaction
-- **On-Demand Token Brokering**: GitHub OAuth tokens are never transmitted to or stored in client-side cookies or `localStorage`. The backend queries Clerk's Backend API on demand (`/v1/users/{user_id}/oauth_access_tokens/oauth_github`) over TLS.
+- **On-Demand Token Brokering**: GitHub OAuth tokens are fetched on demand from Clerk, never stored or logged by MergeWise. Tokens are never transmitted to or stored in client-side cookies or `localStorage`. The backend queries Clerk's Backend API on demand (`/v1/users/{user_id}/oauth_access_tokens/oauth_github`) over TLS.
 - **No Token Storage**: The backend uses the token ephemerally in-memory and never saves raw GitHub credentials to databases.
 - **`SensitiveDataRedactor`**: A custom Python logging filter intercepts every log entry emitted to standard output, standard error, or Google Cloud Logging. It regex-scrubs GitHub PATs (`ghp_`, `gho_`), Bearer authorization headers, and Clerk secret keys (`sk_live_`, `sk_test_`), ensuring zero secret leakage to log aggregators.
 
-### 3. Multi-Tenant Firestore Isolation
-- **Tenant Hierarchy**: All user-specific state is partitioned strictly under `users/{user_id}/` in Cloud Firestore:
+### 3. Multi-Tenant Firestore Isolation & Quota Preservation
+- **Tenant Hierarchy**: All user-specific personal data is partitioned strictly under `users/{user_id}/` in Cloud Firestore:
   - Skill Profile: `users/{user_id}`
   - Outcome Tracking: `users/{user_id}/outcomes/{safe_doc_id}`
-  - Rate Limits: `users/{user_id}/rate_limits/{bucket_key}`
+- **Rate-Limit Quotas in Top-Level Collection**: Rate-limit counters are maintained in a top-level `rate_limits` collection (keyed by sanitized `user_id` and time bucket), outside `users/{user_id}/`. They contain no personal content and are excluded from user data deletion to prevent quota-reset evasion.
 - **Cross-Tenant Guard**: User $A$ cannot query, mutate, or read data belonging to User $B$. All queries are scoped strictly by the authenticated `user_id` parsed from the validated JWT `sub` claim.
-- **GDPR / Right to be Forgotten**: `delete_all_user_data` recursively deletes all documents in subcollections under `users/{user_id}` and purges in-memory caches.
+- **User-Initiated Data Deletion**: `delete_all_user_data` recursively deletes all documents and subcollections rooted under `users/{user_id}` and purges in-memory caches, while keeping top-level quota records intact.
 
 ### 4. Prompt-Injection Guard & Bounded Tools
 - **Instruction Boundary**: In `GeminiPlanAgent`, user input and untrusted issue descriptions from GitHub are isolated from system instructions using explicit boundary framing. The system prompt instructs Gemini to treat issue text strictly as passive data and never execute embedded directives.
@@ -158,11 +158,13 @@ MergeWise enforces multi-layer enterprise security standards across identity, to
 - **Bounded Iteration**: Tool loops are limited to a maximum of 8 calls, preventing denial-of-wallet tool recursion.
 
 ### 5. Distributed Firestore Rate Limits & Quotas
-Cloud Run instances scale to zero and do not share in-memory state. Rate limits are tracked across instances using **atomic Firestore transactions**:
+Cloud Run instances scale to zero and do not share in-memory state. Rate limits are tracked across instances using **atomic Firestore transactions** in the `rate_limits` collection:
 - **Recommendations**: Bounded per user by `RATE_LIMIT_RECOMMENDATIONS_PER_MINUTE` (default: 10/min).
 - **Plan Generation**: Bounded per user by `RATE_LIMIT_PLAN_PER_MINUTE` (default: 5/min).
 - **User Daily Cap**: Bounded per user by `GEMINI_USER_DAILY_CAP` (default: 20/day) to prevent quota depletion.
 - **Global Daily Cap**: Bounded across all users by `GEMINI_GLOBAL_DAILY_CAP` (default: 500/day) to safeguard Vertex AI billing.
+- **Quota Protection**: Cache hits and failed LLM calls **never consume** the daily Gemini caps. Only successful LLM generation calls increment the quota counters.
+- **Automated TTL Expiration**: Every counter document includes an `expires_at` timestamp field enabling Firestore Native Time-To-Live (TTL) automatic document cleanup.
 - **Clear 429 Responses**: Returns `HTTP 429 Too Many Requests` with exact reset ISO timestamps and standard RFC `Retry-After: <seconds>` headers.
 
 ### 6. Production API Hardening
