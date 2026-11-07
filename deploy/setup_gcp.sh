@@ -10,7 +10,8 @@ if [ -z "${GCP_PROJECT_ID:-}" ]; then
   exit 1
 fi
 
-REGION="${GCP_REGION:-us-central1}"
+REGION="${GCP_REGION:-asia-south1}"
+GCP_LOCATION="${GCP_LOCATION:-global}"
 echo "Configuring GCP Project: $GCP_PROJECT_ID in Region: $REGION..."
 
 gcloud config set project "$GCP_PROJECT_ID"
@@ -73,9 +74,9 @@ else
   echo "echo -n 'sk_live_...' | gcloud secrets create clerk-secret-key --data-file=-"
 fi
 
-# 6. Initialize Firestore in Native Mode (free tier: 1GB, 50k reads/day)
-echo "Ensuring Firestore database exists..."
-gcloud firestore databases create --location="$REGION" --type=firestore-native || echo "Firestore database already active."
+# 6. Verify Firestore in Native Mode (default database preserved in asia-south1)
+echo "Checking Firestore database status..."
+gcloud firestore databases describe --database="(default)" >/dev/null 2>&1 && echo "Firestore (default) is active in asia-south1 — retaining existing database." || gcloud firestore databases create --location="$REGION" --type=firestore-native
 
 echo "=============================================================================="
 echo "GCP Setup Complete!"

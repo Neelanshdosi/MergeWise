@@ -38,6 +38,25 @@ class Settings(BaseSettings):
         description="Authorized parties (azp claim in Clerk JWT), e.g. frontend domain"
     )
 
+    # Rate Limiting Configuration (Stored in Firestore across Cloud Run instances)
+    RATE_LIMIT_ENABLED: bool = Field(default=True, description="Enable or disable distributed Firestore rate limiting")
+    RATE_LIMIT_RECOMMENDATIONS_PER_MINUTE: int = Field(
+        default=10,
+        description="Max recommendations queries allowed per user per minute"
+    )
+    RATE_LIMIT_PLAN_PER_MINUTE: int = Field(
+        default=5,
+        description="Max plan requests allowed per user per minute"
+    )
+    GEMINI_USER_DAILY_CAP: int = Field(
+        default=20,
+        description="Max Gemini plan calls allowed per user per UTC day"
+    )
+    GEMINI_GLOBAL_DAILY_CAP: int = Field(
+        default=500,
+        description="Max Gemini plan calls allowed across all users per UTC day"
+    )
+
     # AI & GCP Configuration
     GEMINI_MODEL_ID: Optional[str] = Field(
         default=None,

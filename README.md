@@ -1,64 +1,223 @@
-# MergeWise — OSS Match Agent
+# MergeWise — Personalized OSS Match & Implementation Agent
 
-A personalized open-source issue recommender that analyzes your GitHub footprint to build a skill profile, finds public open-source issues you can realistically finish, verifies live viability, and drafts an actionable starter plan with outcome memory.
+A personalized open-source issue recommender and implementation agent. MergeWise analyzes a developer's GitHub footprint to construct a nuanced skill profile, identifies live viable newcomer issues matching their technical background, and drafts an actionable, grounded implementation starter plan using Google Vertex AI (`gemini-3.8-flash`) and outcome memory.
 
 ---
 
-## Architecture Overview
+## 1. System Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Client ["Frontend (Next.js 15 App Router)"]
-        UI[Dashboard & Issue Plan Modal]
-        ClerkClient[Clerk GitHub Auth]
+    subgraph Client ["Client Layer"]
+        UI["Next.js 15 App (React 19, Tailwind, Lucide)"]
+        ClerkWeb["Clerk Auth SDK (GitHub OAuth read:user)"]
     end
 
-    subgraph GCP ["Google Cloud (Scale-to-Zero)"]
-        subgraph CloudRun ["Cloud Run Services"]
-            FrontRun[mergewise-frontend]
-            BackRun[mergewise-backend / FastAPI]
+    subgraph GCP ["Google Cloud Platform (asia-south1 & global)"]
+        subgraph CloudRun ["Cloud Run Services (max-instances: 3, Scale-to-Zero)"]
+            FrontendSvc["mergewise-frontend\n(Next.js Standalone SSR)"]
+            BackendSvc["mergewise-backend\n(FastAPI Async API)"]
         end
 
-        subgraph Security ["Security & Auth Layer"]
-            JWKS[Clerk JWKS / RS256 Verification]
-            TokenFilter[Token Redacting Logger]
-            ClerkBAPI[Clerk Backend API: OAuth Access Tokens]
+        subgraph SecurityLayer ["Security & Identity Gateway"]
+            JWKS["Clerk JWKS RS256 Verification\n(iss, azp, exp, sub)"]
+            TokenBroker["Clerk Backend API\n(On-demand OAuth Token Broker)"]
+            Redactor["SensitiveDataRedactor\n(Zero-leak log interceptor)"]
         end
 
-        subgraph AI_Engine ["AI & Match Engine"]
-            SharedFeat["Shared Feature Package\n(mergewise-features)"]
-            Gemini["Vertex AI Gemini\ngemini-3.8-flash\n(Tool Calling & Starter Plans)"]
-            Ranker["LightGBM ML Ranker / Heuristics"]
+        subgraph DistributedQuota ["Distributed Quota & State (Cloud Firestore asia-south1)"]
+            FSRateLimit["Firestore Distributed Rate Limiter\n- User Minute Quota (rec: 10/min, plan: 5/min)\n- User Daily Cap (20/day)\n- Global Daily Cap (500/day)"]
+            FSMemory["Firestore Tenant Store\n- User Profiles (users/{uid})\n- Outcome Memory (users/{uid}/outcomes)\n- 60-day half-life decay"]
         end
 
-        subgraph Persistence ["State & Memory"]
-            Firestore[Cloud Firestore: Profiles & Outcomes]
-            BQ[BigQuery: GH Archive Evaluation Table]
+        subgraph MatchingEngine ["AI & Recommendation Engine"]
+            SharedCore["mergewise-features\n(Shared Feature Extraction Package)"]
+            ViabilityChecker["Live Pre-Flight Viability\n(Contention, assignees, comments)"]
+            HeuristicRanker["MergeWise Match Ranker\n(Heuristic + Dynamic Skill Weights)"]
+            GeminiAgent["Vertex AI Gemini Agent\n(gemini-3.8-flash via location=global)\n- Responsiveness metrics\n- Cited build/test commands\n- Verified file paths\n- Injection guard"]
+        end
+
+        subgraph OfflineBenchmark ["Offline Evaluation Engine"]
+            BigQuery["Google BigQuery (GH Archive Data)\n- Sampled 2018 event tables\n- Leakage-audited cutoff time\n- Paired bootstrap metrics"]
         end
     end
 
-    ClerkClient -->|GitHub Login read:user| FrontRun
-    FrontRun -->|Bearer Clerk JWT| BackRun
-    BackRun -->|RS256 iss/azp/exp Validation| JWKS
-    BackRun -->|On-demand token lookup| ClerkBAPI
-    BackRun --> SharedFeat
-    BackRun --> Gemini
-    BackRun --> Ranker
-    BackRun --> Firestore
+    ClerkWeb -->|Session JWT| UI
+    UI -->|HTTPS / API Requests| FrontendSvc
+    FrontendSvc -->|Bearer Clerk JWT| BackendSvc
+    BackendSvc -->|Verify RS256 Signature| JWKS
+    BackendSvc -->|Fetch GitHub Access Token| TokenBroker
+    BackendSvc -->|Sanitize Stderr/Stdout| Redactor
+    BackendSvc -->|Atomic Quota Increment| FSRateLimit
+    BackendSvc -->|Persist Outcomes & Decays| FSMemory
+    BackendSvc -->|Extract Normalized Signals| SharedCore
+    BackendSvc -->|Filter Blocked Issues| ViabilityChecker
+    BackendSvc -->|Rank Top 5 Candidates| HeuristicRanker
+    BackendSvc -->|Generate Grounded Plan| GeminiAgent
 ```
 
 ---
 
-## Phase 1 Acceptance Status: COMPLETED
+## 2. Quickstart & Local Setup
 
-- [x] **Backend Skeleton**: FastAPI configured with restricted CORS and health check `/health`.
-- [x] **Zero-Leak Token Redaction**: Custom `SensitiveDataRedactor` intercepts all logs to prevent GitHub tokens, Bearer strings, or Clerk keys from leaking into stdout/logs.
-- [x] **Clerk JWT Verification**: Strict validation of `exp`, `iss` (Clerk instance), and `azp` (Authorized Party/Frontend origin).
-- [x] **Clerk Backend GitHub Token Broker**: Verified against current Clerk Backend API (`/v1/users/{user_id}/oauth_access_tokens/oauth_github`).
-- [x] **Shared Feature Core**: `shared/mergewise_features` package created for identical feature calculations across live serving and offline evaluation.
-- [x] **Frontend**: Next.js App Router with Clerk GitHub login, rich glassmorphic dashboard, and live backend verification card.
-- [x] **Automated Tests**: Unit tests for JWT validation, expired tokens, azp mismatch, endpoint auth, and token log redaction all passing (`pytest tests/ -v`).
-- [x] **Cloud Run Infrastructure**: Dockerfiles for both services and deployment scripts (`deploy/setup_gcp.sh`, `deploy/deploy_cloudrun.sh`).
+### Prerequisites
+- **Python**: 3.11+
+- **Node.js**: 18+ and `npm`
+- **Google Cloud SDK (`gcloud`)**: authenticated via `gcloud auth application-default login`
+- **Clerk Account**: with GitHub OAuth provider enabled
+
+### Local Configuration
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/your-org/mergewise.git
+   cd MergeWise
+   ```
+
+2. **Backend Setup**:
+   ```bash
+   cd backend
+   python -m venv venv
+   source venv/bin/activate  # Or `.\venv\Scripts\activate` on Windows
+   pip install -r requirements.txt
+   pip install -e ../shared
+   ```
+   Create `backend/.env` with:
+   ```env
+   ENVIRONMENT=development
+   PORT=8000
+   FRONTEND_URL=http://localhost:3000
+   CLERK_SECRET_KEY=sk_test_...
+   CLERK_PUBLISHABLE_KEY=pk_test_...
+   CLERK_ISSUER=https://mutual-panther-6595.clerk.accounts.dev
+   CLERK_AUTHORIZED_PARTIES=["http://localhost:3000","http://localhost:3005"]
+   GEMINI_MODEL_ID=gemini-3.8-flash
+   GCP_PROJECT_ID=oss-match
+   GCP_LOCATION=global
+   FIRESTORE_DATABASE_ID=(default)
+   RATE_LIMIT_ENABLED=true
+   RATE_LIMIT_RECOMMENDATIONS_PER_MINUTE=10
+   RATE_LIMIT_PLAN_PER_MINUTE=5
+   GEMINI_USER_DAILY_CAP=20
+   GEMINI_GLOBAL_DAILY_CAP=500
+   ```
+
+3. **Frontend Setup**:
+   ```bash
+   cd ../frontend
+   npm install
+   ```
+   Create `frontend/.env.local`:
+   ```env
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+   CLERK_SECRET_KEY=sk_test_...
+   NEXT_PUBLIC_API_URL=http://localhost:8000
+   ```
+
+4. **Running Locally**:
+   - Backend:
+     ```bash
+     cd backend && uvicorn app.main:app --reload --port 8000
+     ```
+   - Frontend:
+     ```bash
+     cd frontend && npm run dev
+     ```
+
+---
+
+## 3. Security & Isolation Architecture
+
+MergeWise enforces multi-layer enterprise security standards across identity, token handling, multi-tenant isolation, prompt injection defense, and distributed rate limiting:
+
+### 1. Cryptographic JWT Verification (Clerk RS256)
+- **Token Format**: Validates standard RS256-signed JWTs issued by Clerk.
+- **Dynamic JWKS Caching**: Asynchronously fetches public keys from `{CLERK_ISSUER}/.well-known/jwks.json` and caches them in memory.
+- **Strict Claims Validation**:
+  - `exp`: Confirms the token has not expired against UTC system clock.
+  - `iss`: Matches `CLERK_ISSUER` strictly (rejecting foreign Clerk tenants).
+  - `azp` (Authorized Party): Strictly matches configured frontend origins (`FRONTEND_URL` or `CLERK_AUTHORIZED_PARTIES`), preventing cross-site token relay.
+  - `sub`: Identifies the immutable Clerk User ID.
+
+### 2. Zero-Leak Token Handling & Logging Redaction
+- **On-Demand Token Brokering**: GitHub OAuth tokens are never transmitted to or stored in client-side cookies or `localStorage`. The backend queries Clerk's Backend API on demand (`/v1/users/{user_id}/oauth_access_tokens/oauth_github`) over TLS.
+- **No Token Storage**: The backend uses the token ephemerally in-memory and never saves raw GitHub credentials to databases.
+- **`SensitiveDataRedactor`**: A custom Python logging filter intercepts every log entry emitted to standard output, standard error, or Google Cloud Logging. It regex-scrubs GitHub PATs (`ghp_`, `gho_`), Bearer authorization headers, and Clerk secret keys (`sk_live_`, `sk_test_`), ensuring zero secret leakage to log aggregators.
+
+### 3. Multi-Tenant Firestore Isolation
+- **Tenant Hierarchy**: All user-specific state is partitioned strictly under `users/{user_id}/` in Cloud Firestore:
+  - Skill Profile: `users/{user_id}`
+  - Outcome Tracking: `users/{user_id}/outcomes/{safe_doc_id}`
+  - Rate Limits: `users/{user_id}/rate_limits/{bucket_key}`
+- **Cross-Tenant Guard**: User $A$ cannot query, mutate, or read data belonging to User $B$. All queries are scoped strictly by the authenticated `user_id` parsed from the validated JWT `sub` claim.
+- **GDPR / Right to be Forgotten**: `delete_all_user_data` recursively deletes all documents in subcollections under `users/{user_id}` and purges in-memory caches.
+
+### 4. Prompt-Injection Guard & Bounded Tools
+- **Instruction Boundary**: In `GeminiPlanAgent`, user input and untrusted issue descriptions from GitHub are isolated from system instructions using explicit boundary framing. The system prompt instructs Gemini to treat issue text strictly as passive data and never execute embedded directives.
+- **Path Whitelisting**: File inspection tools only access repo paths verified to exist in the repository tree; path traversal (`../`) and arbitrary remote URL fetching are rejected.
+- **Bounded Iteration**: Tool loops are limited to a maximum of 8 calls, preventing denial-of-wallet tool recursion.
+
+### 5. Distributed Firestore Rate Limits & Quotas
+Cloud Run instances scale to zero and do not share in-memory state. Rate limits are tracked across instances using **atomic Firestore transactions**:
+- **Recommendations**: Bounded per user by `RATE_LIMIT_RECOMMENDATIONS_PER_MINUTE` (default: 10/min).
+- **Plan Generation**: Bounded per user by `RATE_LIMIT_PLAN_PER_MINUTE` (default: 5/min).
+- **User Daily Cap**: Bounded per user by `GEMINI_USER_DAILY_CAP` (default: 20/day) to prevent quota depletion.
+- **Global Daily Cap**: Bounded across all users by `GEMINI_GLOBAL_DAILY_CAP` (default: 500/day) to safeguard Vertex AI billing.
+- **Clear 429 Responses**: Returns `HTTP 429 Too Many Requests` with exact reset ISO timestamps and standard RFC `Retry-After: <seconds>` headers.
+
+### 6. Production API Hardening
+When `ENVIRONMENT=production`, FastAPI automatically disables Swagger UI (`/docs`), ReDoc (`/redoc`), and the OpenAPI schema (`/openapi.json`), returning `HTTP 404` to eliminate attack surface enumeration.
+
+---
+
+## 4. Production Cloud Run Deployment
+
+Both microservices are deployed on **Google Cloud Run** in `asia-south1` (Mumbai) with Vertex AI Gemini in `global`:
+
+| Microservice | Production Live URL | Configuration |
+| :--- | :--- | :--- |
+| **Frontend** | `https://mergewise-frontend-708575763180.asia-south1.run.app` | Next.js 15 Standalone, Scale-to-Zero, `max-instances=3` |
+| **Backend** | `https://mergewise-backend-708575763180.asia-south1.run.app` | FastAPI, Python 3.11, Scale-to-Zero, `max-instances=3` |
+
+### Deployment Steps
+
+1. **Configure Google Cloud Project**:
+   ```bash
+   gcloud config set project oss-match
+   bash deploy/setup_gcp.sh
+   ```
+
+2. **Deploy Backend**:
+   ```bash
+   gcloud builds submit --config=cloudbuild-backend.yaml .
+   gcloud run deploy mergewise-backend \
+     --image asia-south1-docker.pkg.dev/oss-match/mergewise-repo/mergewise-backend:latest \
+     --region asia-south1 \
+     --platform managed \
+     --service-account mergewise-runner@oss-match.iam.gserviceaccount.com \
+     --min-instances 0 \
+     --max-instances 3 \
+     --set-env-vars "ENVIRONMENT=production,GEMINI_MODEL_ID=gemini-3.8-flash,GCP_PROJECT_ID=oss-match,GCP_LOCATION=global,FIRESTORE_DATABASE_ID=(default)" \
+     --set-secrets "CLERK_SECRET_KEY=clerk-secret-key:latest"
+   ```
+
+3. **Deploy Frontend**:
+   ```bash
+   gcloud builds submit --config=cloudbuild-frontend.yaml \
+     --substitutions "_API_URL=https://mergewise-backend-708575763180.asia-south1.run.app" .
+   gcloud run deploy mergewise-frontend \
+     --image asia-south1-docker.pkg.dev/oss-match/mergewise-repo/mergewise-frontend:latest \
+     --region asia-south1 \
+     --platform managed \
+     --service-account mergewise-runner@oss-match.iam.gserviceaccount.com \
+     --min-instances 0 \
+     --max-instances 3
+   ```
+
+4. **Run Smoke Verification**:
+   ```bash
+   python deploy/smoke_test.py
+   ```
 
 ---
 
@@ -188,5 +347,50 @@ The offline evaluation against GitHub Archive backtests candidate issue ranking 
      python eval/evaluate.py
      ```
 
+---
 
+## 5. Two-Minute Interactive Demo Script
 
+Use this script to guide a 2-minute live presentation or evaluation walkthrough:
+
+```
+[0:00 - 0:25] THE NEWCOMER PROBLEM & AUTHENTICATION
+Presenter: "Getting into open source is notoriously intimidating: issues labeled 'good first issue'
+are often already solved, abandoned by maintainers, or outside your skill level.
+Let's see how MergeWise solves this."
+Action: Visit https://mergewise-frontend-708575763180.asia-south1.run.app and click "Sign In with GitHub".
+Sign in using Clerk OAuth. Point out that the session token is an RS256 JWT, with zero credentials
+stored in the browser.
+
+[0:25 - 0:50] AUTOMATED SKILL PROFILING & PRE-FLIGHT VIABILITY
+Presenter: "Without asking you for a resume, MergeWise ingests your public GitHub commits and PRs.
+Here you see our languages (Python, TypeScript), frameworks detected from lockfiles, and commit recency."
+Action: Show the dashboard header cards.
+Presenter: "Next, look at the recommended issues. Notice the green 'Viable' badges. MergeWise didn't
+just search GitHub; it performed live pre-flight checks to confirm:
+1. No competing open PRs are already solving it
+2. No assignee has claimed it
+3. The repo's maintainers actually review newcomer PRs within days."
+
+[0:50 - 1:25] GROUNDED STARTER PLAN WITH VERTEX AI (gemini-3.8-flash)
+Presenter: "Finding an issue is only half the battle. Now we need to know how to solve it."
+Action: Click "Generate Implementation Plan" on an issue.
+Presenter: "In the background, our Gemini agent inspected the repository using sandboxed GitHub tools:
+- It extracted the exact setup command ('pip install -e .') citing CONTRIBUTING.md
+- It verified the exact test command ('pytest tests/')
+- It verified the specific source file you need to modify
+- It drafted a respectful maintainer claim comment ready to copy with one click."
+
+[1:25 - 1:45] OUTCOME MEMORY & DYNAMIC FEEDBACK LOOP
+Presenter: "What happens if this issue was too difficult or you skipped it?"
+Action: Click the 'Too Hard' button on an issue card.
+Presenter: "MergeWise writes this outcome to Cloud Firestore. Using exponential time decay with a
+60-day half-life, the ranking engine dynamically shifts topic weights. Future recommendations
+will de-prioritize this sub-topic without completely blacklisting it."
+
+[1:45 - 2:00] SECURITY & CLOUD RUN PRODUCTION HARDENING
+Presenter: "In production, MergeWise runs scale-to-zero microservices on Google Cloud Run in asia-south1.
+Documentation routes (/docs) are disabled in production, tokens are scrubbed from logs via
+SensitiveDataRedactor, and Firestore-backed rate limiters enforce strict per-user and global AI quotas."
+Action: Run `python deploy/smoke_test.py` to show all 6 automated security tests passing live.
+```

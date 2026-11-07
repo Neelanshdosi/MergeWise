@@ -9,21 +9,19 @@ if [ -z "${GCP_PROJECT_ID:-}" ]; then
   exit 1
 fi
 
-REGION="${GCP_REGION:-us-central1}"
+REGION="${GCP_REGION:-asia-south1}"
+GCP_LOCATION="${GCP_LOCATION:-global}"
 SA_EMAIL="mergewise-runner@${GCP_PROJECT_ID}.iam.gserviceaccount.com"
 REGISTRY="${REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/mergewise-repo"
 
 echo "Deploying MergeWise microservices to Cloud Run..."
-echo "Project: $GCP_PROJECT_ID | Region: $REGION"
+echo "Project: $GCP_PROJECT_ID | Cloud Run Region: $REGION | Vertex Location: $GCP_LOCATION"
 
 # ------------------------------------------------------------------------------
 # 1. Build and Deploy Backend (FastAPI)
 # ------------------------------------------------------------------------------
-echo "Building backend container image..."
-gcloud builds submit \
-  --tag "${REGISTRY}/mergewise-backend:latest" \
-  --project "$GCP_PROJECT_ID" \
-  -f backend/Dockerfile .
+echo "Building backend container image using Cloud Build..."
+gcloud builds submit --config=cloudbuild-backend.yaml .
 
 echo "Deploying mergewise-backend to Cloud Run..."
 gcloud run deploy mergewise-backend \
@@ -32,11 +30,11 @@ gcloud run deploy mergewise-backend \
   --platform managed \
   --service-account "$SA_EMAIL" \
   --min-instances 0 \
-  --max-instances 2 \
+  --max-instances 3 \
   --memory 512Mi \
   --cpu 1 \
   --allow-unauthenticated \
-  --set-env-vars "ENVIRONMENT=production,GEMINI_MODEL_ID=${GEMINI_MODEL_ID:-gemini-2.0-flash},GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_LOCATION=${REGION}" \
+  --set-env-vars "ENVIRONMENT=production,GEMINI_MODEL_ID=${GEMINI_MODEL_ID:-gemini-3.8-flash},GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_LOCATION=${GCP_LOCATION},FIRESTORE_DATABASE_ID=(default)" \
   --set-secrets "CLERK_SECRET_KEY=clerk-secret-key:latest"
 
 BACKEND_URL=$(gcloud run services describe mergewise-backend --region "$REGION" --format 'value(status.url)')
@@ -45,12 +43,9 @@ echo "Backend deployed at: $BACKEND_URL"
 # ------------------------------------------------------------------------------
 # 2. Build and Deploy Frontend (Next.js)
 # ------------------------------------------------------------------------------
-echo "Building frontend container image with NEXT_PUBLIC_API_URL=$BACKEND_URL..."
-gcloud builds submit \
-  --tag "${REGISTRY}/mergewise-frontend:latest" \
-  --project "$GCP_PROJECT_ID" \
-  --substitutions "_API_URL=${BACKEND_URL}" \
-  frontend/
+echo "Building frontend container image with Cloud Build..."
+gcloud builds submit --config=cloudbuild-frontend.yaml \
+  --substitutions "_API_URL=${BACKEND_URL}" .
 
 echo "Deploying mergewise-frontend to Cloud Run..."
 gcloud run deploy mergewise-frontend \
@@ -59,7 +54,7 @@ gcloud run deploy mergewise-frontend \
   --platform managed \
   --service-account "$SA_EMAIL" \
   --min-instances 0 \
-  --max-instances 2 \
+  --max-instances 3 \
   --memory 512Mi \
   --cpu 1 \
   --allow-unauthenticated
@@ -68,12 +63,12 @@ FRONTEND_URL=$(gcloud run services describe mergewise-frontend --region "$REGION
 echo "Frontend deployed at: $FRONTEND_URL"
 
 # ------------------------------------------------------------------------------
-# 3. Update Backend CORS to Strictly Allow Frontend URL
+# 3. Update Backend with Frontend URL (Allowed CORS Origin)
 # ------------------------------------------------------------------------------
-echo "Configuring backend CORS with FRONTEND_URL=$FRONTEND_URL and CLERK_AUTHORIZED_PARTIES..."
+echo "Configuring backend CORS with FRONTEND_URL=$FRONTEND_URL..."
 gcloud run services update mergewise-backend \
   --region "$REGION" \
-  --update-env-vars "FRONTEND_URL=${FRONTEND_URL},CLERK_AUTHORIZED_PARTIES=[\"${FRONTEND_URL}\"]"
+  --update-env-vars "FRONTEND_URL=${FRONTEND_URL}"
 
 echo "=============================================================================="
 echo "Deployment Finished Successfully!"

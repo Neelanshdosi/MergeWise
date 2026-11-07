@@ -17,6 +17,7 @@ from ..services.memory import (
     derive_skill_weights_and_excluded_issues,
     log_shown_recommendations,
 )
+from ..services.rate_limiter import check_recommendations_rate_limit
 from ..ranker.heuristic import rank_viable_issues
 from mergewise_features.schemas import (
     UserSkillProfile,
@@ -172,6 +173,9 @@ async def get_recommended_issues(
     - Lazy relaxation: stops as soon as >= 5 viable issues are found.
     - Bypasses cache ONLY for search queries, preserving repo & manifest caches.
     """
+    # Phase 6: Distributed per-user rate limit check (Firestore-backed)
+    await check_recommendations_rate_limit(user.user_id)
+
     token = await user.get_github_token()
     client = GitHubClient(token=token)
 

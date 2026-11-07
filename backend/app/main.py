@@ -12,10 +12,15 @@ from .routers.outcomes import router as outcomes_router
 # Initialize sensitive-token-redacting logger
 logger = setup_logging()
 
+is_production = settings.ENVIRONMENT.lower() == "production"
+
 app = FastAPI(
     title="MergeWise / OSS Match Agent API",
     description="Personalized open-source issue recommender backend",
     version="0.1.0",
+    docs_url=None if is_production else "/docs",
+    redoc_url=None if is_production else "/redoc",
+    openapi_url=None if is_production else "/openapi.json",
 )
 
 # Strictly restrict CORS to configured frontend origins
@@ -52,6 +57,6 @@ async def health_check():
 async def root():
     return {
         "name": "MergeWise API",
-        "docs_url": "/docs",
+        "docs_url": None if is_production else "/docs",
         "health_url": "/health",
     }

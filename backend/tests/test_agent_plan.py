@@ -721,32 +721,43 @@ async def test_api_plan_endpoint_integration():
         cached=False,
     )
 
-    with patch.object(GeminiPlanAgent, "generate_plan", AsyncMock(return_value=mock_plan_response)):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            payload = {
-                "repo_full_name": "tiangolo/fastapi",
-                "issue_number": 1234,
-                "title": "Clarify dependency injection tutorial in documentation",
-                "body": "The docs in docs/tutorial.md could be expanded.",
-                "labels": ["documentation", "good first issue"],
-                "force_refresh": True
-            }
-            response = await client.post("/api/plan", json=payload)
-            assert response.status_code == 200
-            data = response.json()
-            assert data["repo_full_name"] == "tiangolo/fastapi"
-            assert data["issue_number"] == 1234
-            assert "difficulty" in data
-            assert "estimated_hours" in data
-            assert "setup_command" in data
-            assert "test_command" in data
-            assert "steps" in data
-            assert len(data["steps"]) >= 1
-            assert "draft_claim_comment" in data
-            assert "repo_health" in data
-            assert "llm_used" in data
-            assert "token_usage" in data
+    from app.auth.dependencies import get_current_user, AuthenticatedUser
+    mock_auth_user = AuthenticatedUser(
+        user_id="user_plan_test_123",
+        claims={"sub": "user_plan_test_123", "github_username": "octocat"},
+        token="test_jwt_token",
+    )
+    app.dependency_overrides[get_current_user] = lambda: mock_auth_user
+
+    try:
+        with patch.object(GeminiPlanAgent, "generate_plan", AsyncMock(return_value=mock_plan_response)):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                payload = {
+                    "repo_full_name": "tiangolo/fastapi",
+                    "issue_number": 1234,
+                    "title": "Clarify dependency injection tutorial in documentation",
+                    "body": "The docs in docs/tutorial.md could be expanded.",
+                    "labels": ["documentation", "good first issue"],
+                    "force_refresh": True
+                }
+                response = await client.post("/api/plan", json=payload)
+                assert response.status_code == 200
+                data = response.json()
+                assert data["repo_full_name"] == "tiangolo/fastapi"
+                assert data["issue_number"] == 1234
+                assert "difficulty" in data
+                assert "estimated_hours" in data
+                assert "setup_command" in data
+                assert "test_command" in data
+                assert "steps" in data
+                assert len(data["steps"]) >= 1
+                assert "draft_claim_comment" in data
+                assert "repo_health" in data
+                assert "llm_used" in data
+                assert "token_usage" in data
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.mark.asyncio
