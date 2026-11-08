@@ -34,6 +34,7 @@ gcloud run deploy mergewise-backend \
   --memory 512Mi \
   --cpu 1 \
   --allow-unauthenticated \
+  --set-secrets "CLERK_SECRET_KEY=clerk-secret-key:latest" \
   --set-env-vars "ENVIRONMENT=production,GEMINI_MODEL_ID=${GEMINI_MODEL_ID:-gemini-3.8-flash},GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_LOCATION=${GCP_LOCATION},FIRESTORE_DATABASE_ID=(default)" \
   --set-secrets "CLERK_SECRET_KEY=clerk-secret-key:latest"
 
@@ -57,7 +58,8 @@ gcloud run deploy mergewise-frontend \
   --max-instances 3 \
   --memory 512Mi \
   --cpu 1 \
-  --allow-unauthenticated
+  --allow-unauthenticated \
+  --set-secrets "CLERK_SECRET_KEY=clerk-secret-key:latest"
 
 FRONTEND_URL=$(gcloud run services describe mergewise-frontend --region "$REGION" --format 'value(status.url)')
 echo "Frontend deployed at: $FRONTEND_URL"
