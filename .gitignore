@@ -67,3 +67,5 @@ Thumbs.db
 # GCP & Local Cache
 diskcache_data/
 *.db
+*.tsbuildinfo
+capture_*.py

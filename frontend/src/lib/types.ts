@@ -191,6 +191,49 @@ export interface OutcomeRecord {
   notes?: string | null;
 }
 
+export interface ContributionItem {
+  repo: string;
+  number: number;
+  title: string;
+  state: "merged" | "open" | "closed";
+  created_at?: string | null;
+  merged_at?: string | null;
+  url: string;
+  stars: number;
+  repo_owner_avatar_url?: string | null;
+  via_mergewise: boolean;
+}
+
+export interface ContributionsSummary {
+  merged_count: number;
+  open_count: number;
+  closed_count: number;
+  repo_count: number;
+}
+
+export interface ContributionsResponse {
+  summary: ContributionsSummary;
+  items: ContributionItem[];
+  rate_limit_notice?: string | null;
+}
+
+export interface FunnelMetricsResponse {
+  shown: number;
+  plan_viewed: number;
+  attempted: number;
+  pr_opened: number;
+  merged: number;
+}
+
+export interface OutcomeSuggestion {
+  repo: string;
+  issue_number: number;
+  pr_number: number;
+  pr_title: string;
+  pr_url: string;
+  suggested_outcome: "merged" | "pr_opened";
+}
+
 export interface RecordOutcomeRequest {
   repo_full_name: string;
   issue_number: number;

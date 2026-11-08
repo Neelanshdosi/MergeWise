@@ -6,6 +6,9 @@ import {
   UserSkillProfile,
   IssuePlanResponse,
   GeneratePlanRequest,
+  ContributionsResponse,
+  FunnelMetricsResponse,
+  OutcomeSuggestion,
 } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -190,6 +193,60 @@ export async function deleteMyData(jwtToken: string): Promise<{ success: boolean
   if (!resp.ok) {
     const errorData = await resp.json().catch(() => ({ detail: "Network error" }));
     throw new Error(errorData.detail || `Failed to delete data: HTTP ${resp.status}`);
+  }
+
+  return resp.json();
+}
+
+export async function fetchContributions(
+  jwtToken: string,
+  refresh: boolean = false
+): Promise<ContributionsResponse> {
+  const url = `${API_BASE_URL}/api/contributions${refresh ? "?refresh=true" : ""}`;
+  const resp = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${jwtToken}`,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!resp.ok) {
+    const errorData = await resp.json().catch(() => ({ detail: "Network error" }));
+    throw new Error(errorData.detail || `Failed to fetch contributions: HTTP ${resp.status}`);
+  }
+
+  return resp.json();
+}
+
+export async function fetchFunnel(jwtToken: string): Promise<FunnelMetricsResponse> {
+  const resp = await fetch(`${API_BASE_URL}/api/funnel`, {
+    headers: {
+      Authorization: `Bearer ${jwtToken}`,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!resp.ok) {
+    const errorData = await resp.json().catch(() => ({ detail: "Network error" }));
+    throw new Error(errorData.detail || `Failed to fetch funnel metrics: HTTP ${resp.status}`);
+  }
+
+  return resp.json();
+}
+
+export async function fetchOutcomeSuggestions(jwtToken: string): Promise<OutcomeSuggestion[]> {
+  const resp = await fetch(`${API_BASE_URL}/api/outcomes/suggest`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${jwtToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!resp.ok) {
+    return [];
   }
 
   return resp.json();

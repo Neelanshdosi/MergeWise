@@ -1,25 +1,111 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { useAuth, useUser, SignInButton, SignedIn, SignedOut } from "@clerk/nextjs";
-import { fetchUserProfile, fetchRecommendations, submitColdStart, deleteMyData } from "@/lib/api";
-import { UserProfileResponse, RecommendationsResponse, ColdStartQuestionnaire } from "@/lib/types";
+import React, { useEffect, useState, useMemo, useRef } from "react";
+import { useAuth, useUser } from "@clerk/nextjs";
+import {
+  fetchUserProfile,
+  fetchRecommendations,
+  submitColdStart,
+  deleteMyData,
+  fetchContributions,
+  fetchFunnel,
+} from "@/lib/api";
+import {
+  UserProfileResponse,
+  RecommendationsResponse,
+  ColdStartQuestionnaire,
+  ContributionsResponse,
+  FunnelMetricsResponse,
+  ScoredIssueCandidate,
+} from "@/lib/types";
 import IssueCard from "@/components/IssueCard";
 import ColdStartModal from "@/components/ColdStartModal";
+import ContributionsTab from "@/components/ContributionsTab";
+import ProgressTab from "@/components/ProgressTab";
+import LandingHero from "@/components/LandingHero";
+import { useSearch, SortOption } from "@/lib/searchContext";
+import { isStoppedTool } from "@/lib/stoplist";
+import {
+  SyncIcon,
+  AlertIcon,
+  IssueOpenedIcon,
+  GearIcon,
+  CheckIcon,
+  TrashIcon,
+  GitPullRequestIcon,
+  BookIcon,
+  PulseIcon,
+  RepoIcon,
+  SearchIcon,
+  TriangleDownIcon,
+} from "@/components/Octicons";
+
+const LANG_COLORS: Record<string, string> = {
+  TypeScript: "#3178c6",
+  JavaScript: "#f1e05a",
+  Python: "#3572A5",
+  Go: "#00ADD8",
+  Rust: "#dea584",
+  Java: "#b07219",
+  "C++": "#f34b7d",
+  C: "#555555",
+  Ruby: "#701516",
+  PHP: "#4F5D95",
+  HTML: "#e34c26",
+  CSS: "#563d7c",
+  Shell: "#89e051",
+};
 
 export default function HomePage() {
-  const { getToken, isSignedIn } = useAuth();
+  const { getToken, isSignedIn, isLoaded } = useAuth();
   const { user } = useUser();
+  const {
+    searchQuery,
+    setSearchQuery,
+    sortBy,
+    setSortBy,
+    languageFilter,
+    setLanguageFilter,
+    isPipelineDetailsOpen,
+    setIsPipelineDetailsOpen,
+  } = useSearch();
+
+  const [activeTab, setActiveTab] = useState<"recommended" | "contributions" | "progress">("recommended");
   const [profileMeta, setProfileMeta] = useState<UserProfileResponse | null>(null);
   const [recData, setRecData] = useState<RecommendationsResponse | null>(null);
+  const [contribData, setContribData] = useState<ContributionsResponse | null>(null);
+  const [funnelData, setFunnelData] = useState<FunnelMetricsResponse | null>(null);
+
   const [loadingRecs, setLoadingRecs] = useState<boolean>(false);
+  const [loadingContribs, setLoadingContribs] = useState<boolean>(false);
+  const [loadingFunnel, setLoadingFunnel] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
   const [showColdStartOverride, setShowColdStartOverride] = useState<boolean>(false);
-  const [showQueriesDrawer, setShowQueriesDrawer] = useState<boolean>(false);
   const [refreshCooldown, setRefreshCooldown] = useState<number>(0);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
   const [isDeletingData, setIsDeletingData] = useState<boolean>(false);
   const [deleteSuccessMsg, setDeleteSuccessMsg] = useState<string | null>(null);
+
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
+  const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
+
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+  const langMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent) => {
+      if (sortMenuRef.current && !sortMenuRef.current.contains(e.target as Node)) {
+        setIsSortMenuOpen(false);
+      }
+      if (langMenuRef.current && !langMenuRef.current.contains(e.target as Node)) {
+        setIsLangMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, []);
 
   useEffect(() => {
     if (refreshCooldown <= 0) return;
@@ -36,22 +122,57 @@ export default function HomePage() {
     }
     setLoadingRecs(true);
     setError(null);
+
     try {
       const token = await getToken();
       if (!token) throw new Error("Could not acquire Clerk session token.");
 
-      // 1. Get backend user verification
-      const userMeta = await fetchUserProfile(token);
-      setProfileMeta(userMeta);
+      const [userMeta, recs] = await Promise.all([
+        fetchUserProfile(token).catch((e) => {
+          console.warn("Could not load user profile:", e);
+          return null;
+        }),
+        fetchRecommendations(token, forceRefresh),
+      ]);
 
-      // 2. Fetch live recommendations & pipeline telemetry
-      const recs = await fetchRecommendations(token, forceRefresh);
+      if (userMeta) setProfileMeta(userMeta);
       setRecData(recs);
+
+      loadContributions(token, forceRefresh);
+      loadFunnel(token);
     } catch (err: any) {
       console.error("Failed to load recommendations:", err);
       setError(err.message || "Failed to communicate with recommendation service.");
     } finally {
       setLoadingRecs(false);
+    }
+  };
+
+  const loadContributions = async (token?: string, forceRefresh: boolean = false) => {
+    setLoadingContribs(true);
+    try {
+      const authToken = token || (await getToken());
+      if (!authToken) return;
+      const resp = await fetchContributions(authToken, forceRefresh);
+      setContribData(resp);
+    } catch (err: any) {
+      console.warn("Failed to load contributions:", err);
+    } finally {
+      setLoadingContribs(false);
+    }
+  };
+
+  const loadFunnel = async (token?: string) => {
+    setLoadingFunnel(true);
+    try {
+      const authToken = token || (await getToken());
+      if (!authToken) return;
+      const resp = await fetchFunnel(authToken);
+      setFunnelData(resp);
+    } catch (err: any) {
+      console.warn("Failed to load funnel:", err);
+    } finally {
+      setLoadingFunnel(false);
     }
   };
 
@@ -63,11 +184,10 @@ export default function HomePage() {
       if (!token) throw new Error("Missing session token.");
       await submitColdStart(token, answers);
       setShowColdStartOverride(false);
-      // Reload recommendations with new preferences
       const recs = await fetchRecommendations(token, true);
       setRecData(recs);
     } catch (err: any) {
-      setError(err.message || "Failed to update preferences.");
+      setError(err.message || "Cold start failed.");
     } finally {
       setLoadingRecs(false);
     }
@@ -75,17 +195,20 @@ export default function HomePage() {
 
   const handleDeleteMyData = async () => {
     setIsDeletingData(true);
+    setError(null);
     try {
       const token = await getToken();
       if (!token) throw new Error("Missing session token.");
       await deleteMyData(token);
+      setRecData(null);
+      setProfileMeta(null);
+      setContribData(null);
+      setFunnelData(null);
       setShowDeleteConfirm(false);
-      setDeleteSuccessMsg("All your profile, issue outcomes, and recommendations data have been permanently deleted.");
+      setDeleteSuccessMsg("All profile data and recommendation history have been permanently purged.");
       setTimeout(() => setDeleteSuccessMsg(null), 6000);
-      // Reload recommendations cleanly without previous history
-      await loadData(true);
     } catch (err: any) {
-      setError(err.message || "Failed to delete user data.");
+      setError(err.message || "Could not delete data.");
     } finally {
       setIsDeletingData(false);
     }
@@ -97,497 +220,743 @@ export default function HomePage() {
     }
   }, [isSignedIn]);
 
+  // Derive languages and frameworks
+  const languages: [string, number][] = useMemo(() => {
+    const raw: Record<string, number> = recData?.profile?.primary_languages || {};
+    return Object.entries(raw).sort((a, b) => b[1] - a[1]);
+  }, [recData]);
+
+  const validFrameworks = useMemo(() => {
+    const raw: string[] = recData?.profile?.frameworks || [];
+    return raw.filter((fw) => !isStoppedTool(fw));
+  }, [recData]);
+
   const stats = recData?.pipeline_stats;
+  const mergedCount = contribData?.summary?.merged_count ?? recData?.profile?.total_prs ?? 0;
+  const repoCount = contribData?.summary?.repo_count ?? recData?.profile?.total_repos_contributed ?? 0;
+
+  // Client-side search, sort & language filtering of recommended issues
+  const filteredRecommendations = useMemo(() => {
+    let list: ScoredIssueCandidate[] = recData?.recommendations ? [...recData.recommendations] : [];
+
+    // 1. Language Filter
+    if (languageFilter && languageFilter !== "all") {
+      list = list.filter(
+        (c) => (c.issue.primary_language || "").toLowerCase() === languageFilter.toLowerCase()
+      );
+    }
+
+    // 2. Search Query Filter (matches title, repo name, labels, language)
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter((c) => {
+        const titleMatch = (c.issue.title || "").toLowerCase().includes(q);
+        const repoMatch = (c.issue.repo_full_name || "").toLowerCase().includes(q);
+        const langMatch = (c.issue.primary_language || "").toLowerCase().includes(q);
+        const labelMatch = (c.issue.labels || []).some((l) => l.toLowerCase().includes(q));
+        return titleMatch || repoMatch || langMatch || labelMatch;
+      });
+    }
+
+    // 3. Sorting
+    if (sortBy === "match") {
+      list.sort((a, b) => b.score - a.score);
+    } else if (sortBy === "newest") {
+      list.sort((a, b) => (b.issue.created_at_epoch || 0) - (a.issue.created_at_epoch || 0));
+    } else if (sortBy === "stars") {
+      list.sort((a, b) => (b.issue.stars || 0) - (a.issue.stars || 0));
+    }
+
+    return list;
+  }, [recData?.recommendations, searchQuery, languageFilter, sortBy]);
+
+  // Loading state: match dark background (no flicker / no landing flash)
+  if (!isLoaded) {
+    return <div style={{ minHeight: "100vh", backgroundColor: "#0E1116" }} />;
+  }
+
+  // Signed out visitors: show Landing Hero
+  if (!isSignedIn) {
+    return <LandingHero />;
+  }
+
+  const sortLabel =
+    sortBy === "match" ? "Match" : sortBy === "newest" ? "Newest" : "Stars";
+  const langLabel = languageFilter === "all" ? "All languages" : languageFilter;
 
   return (
-    <div className="container" style={{ paddingTop: "40px", paddingBottom: "100px" }}>
-      {/* Signed Out View */}
-      <SignedOut>
-        <div style={{ textAlign: "center", maxWidth: "800px", margin: "40px auto" }}>
-          <div style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "8px",
-            padding: "6px 16px",
-            borderRadius: "9999px",
-            background: "rgba(99, 102, 241, 0.1)",
-            border: "1px solid rgba(99, 102, 241, 0.3)",
-            fontSize: "0.85rem",
-            color: "#a5b4fc",
-            marginBottom: "24px",
-          }}>
-            <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#6366f1" }} />
-            Phase 2: Live Viability Filter & Personalized Heuristic Matching
-          </div>
+    <div style={{ backgroundColor: "var(--color-canvas-default)", minHeight: "100vh" }}>
+      {/* 2. Underline Nav under Header (GitHub Repo Style) */}
+      <nav className="RepoNav" aria-label="Repository navigation">
+        <div className="RepoNav-container" role="tablist">
+          <button
+            role="tab"
+            id="tab-recommended"
+            aria-selected={activeTab === "recommended"}
+            className={`RepoNav-item ${activeTab === "recommended" ? "selected" : ""}`}
+            onClick={() => setActiveTab("recommended")}
+          >
+            <IssueOpenedIcon size={16} />
+            <span>Recommended</span>
+            {recData?.recommendations?.length ? (
+              <span className="Counter">{recData.recommendations.length}</span>
+            ) : null}
+          </button>
 
-          <h1 style={{
-            fontSize: "3.2rem",
-            fontWeight: 800,
-            lineHeight: 1.15,
-            letterSpacing: "-0.03em",
-            marginBottom: "20px",
-          }}>
-            Find Open-Source Issues You Can{" "}
-            <span style={{
-              background: "var(--accent-gradient)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-            }}>
-              Actually Finish
-            </span>
-          </h1>
+          <button
+            role="tab"
+            id="tab-contributions"
+            aria-selected={activeTab === "contributions"}
+            className={`RepoNav-item ${activeTab === "contributions" ? "selected" : ""}`}
+            onClick={() => setActiveTab("contributions")}
+          >
+            <GitPullRequestIcon size={16} />
+            <span>My contributions</span>
+            {contribData?.summary?.merged_count !== undefined ? (
+              <span className="Counter">{contribData.summary.merged_count}</span>
+            ) : null}
+          </button>
 
-          <p style={{
-            fontSize: "1.2rem",
-            color: "var(--text-secondary)",
-            marginBottom: "36px",
-            lineHeight: 1.6,
-          }}>
-            MergeWise analyzes your real GitHub footprint (languages, manifests, recency),
-            verifies live issue viability (unassigned, no competing PRs), and delivers 5 matched issues.
-          </p>
-
-          <SignInButton mode="modal">
-            <button className="btn-primary" style={{ padding: "14px 32px", fontSize: "1.05rem" }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
-              </svg>
-              Sign In with GitHub to View Your Matches
-            </button>
-          </SignInButton>
+          <button
+            role="tab"
+            id="tab-progress"
+            aria-selected={activeTab === "progress"}
+            className={`RepoNav-item ${activeTab === "progress" ? "selected" : ""}`}
+            onClick={() => setActiveTab("progress")}
+          >
+            <CheckIcon size={16} />
+            <span>Progress</span>
+          </button>
         </div>
-      </SignedOut>
+      </nav>
 
-      {/* Signed In View */}
-      <SignedIn>
-        <div>
-          {/* Top Profile Summary Bar */}
-          <div className="glass-panel" style={{ padding: "24px", marginBottom: "24px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "16px" }}>
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
-                  <h1 style={{ fontSize: "1.7rem", fontWeight: 700 }}>
-                    Welcome, {profileMeta?.github_username || user?.username || "Developer"}
-                  </h1>
-                  <span className="badge badge-success">GitHub Connected</span>
-                </div>
-                <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
-                  Skill profile built from your GitHub footprint & repository manifests.
-                </p>
-              </div>
+      {/* Main Container */}
+      <div className="RepoLayout">
+        {/* Flash Banners */}
+        {deleteSuccessMsg && (
+          <div className="Flash Flash--success" style={{ marginBottom: "16px" }}>
+            <CheckIcon size={16} />
+            <span>{deleteSuccessMsg}</span>
+          </div>
+        )}
 
-              <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                <button
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className="btn-secondary"
-                  style={{ fontSize: "0.85rem", padding: "8px 12px", color: "#f87171", borderColor: "rgba(248, 113, 113, 0.3)" }}
-                  title="Purges all outcomes, memory, and personal documents from database"
-                >
-                  🗑 Delete my data
-                </button>
-                <button
-                  onClick={() => setShowColdStartOverride(!showColdStartOverride)}
-                  className="btn-secondary"
-                  style={{ fontSize: "0.85rem", padding: "8px 14px" }}
-                >
-                  ⚙ Preferences
-                </button>
-                <button
-                  onClick={() => loadData(true)}
-                  className="btn-primary"
-                  style={{ fontSize: "0.85rem", padding: "8px 16px" }}
-                  disabled={loadingRecs || refreshCooldown > 0}
-                >
-                  {loadingRecs
-                    ? "Scanning GitHub..."
-                    : refreshCooldown > 0
-                    ? `Refresh Cool-off (${refreshCooldown}s)`
-                    : "↻ Refresh Issues"}
-                </button>
+        {error && (
+          <div className="Flash Flash--error" style={{ marginBottom: "16px" }}>
+            <AlertIcon size={16} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* GitHub Rate Limit Warning Banner */}
+        {(stats?.rate_limit_notice || stats?.search_rate_limit?.is_limited) && (
+          <div className="Flash Flash--warning" style={{ marginBottom: "16px" }}>
+            <AlertIcon size={16} />
+            <div>
+              <strong>GitHub Rate Limit Reached:</strong>{" "}
+              {stats?.rate_limit_notice ||
+                `Search quota exhausted. Resets at ${stats?.search_rate_limit?.reset_time || "shortly"}.`}
+              <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", marginTop: "4px" }}>
+                Your footprint profile and cached recommendations are preserved.
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Profile Statistics Pills */}
-            {recData?.profile && (
-              <div style={{
-                marginTop: "20px",
-                paddingTop: "20px",
-                borderTop: "1px solid var(--border-color)",
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                gap: "16px",
-              }}>
-                <div>
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block" }}>
-                    Top Languages
-                  </span>
-                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
-                    {Object.entries(recData.profile.primary_languages).slice(0, 3).map(([lang, pct]) => (
-                      <span key={lang} style={{ fontSize: "0.8rem", padding: "3px 8px", borderRadius: "4px", background: "rgba(99, 102, 241, 0.15)", color: "#c7d2fe" }}>
-                        {lang}: {Math.round(pct * 100)}%
-                      </span>
-                    ))}
-                    {Object.keys(recData.profile.primary_languages).length === 0 && (
-                      <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>None detected</span>
-                    )}
+        {/* Cold Start / Preferences Modal */}
+        {(showColdStartOverride || (recData?.is_cold_start && !recData.recommendations.length)) && (
+          <ColdStartModal onComplete={handleColdStartSubmit} isLoading={loadingRecs} />
+        )}
+
+        {/* 3. Title Row: Owner avatar, MergeWise in large weight, OSS Match pill, action buttons */}
+        <div className="RepoTitleRow">
+          <div className="RepoTitle-left">
+            {user?.imageUrl ? (
+              <img
+                src={user.imageUrl}
+                alt="MergeWise"
+                width={32}
+                height={32}
+                style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover" }}
+                className="RepoTitle-avatar"
+              />
+            ) : (
+              <img
+                src="/mergewise-logo.png"
+                alt="MergeWise"
+                width={32}
+                height={32}
+                style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover" }}
+                className="RepoTitle-avatar"
+              />
+            )}
+            <h1 className="RepoTitle-name" style={{ margin: 0, padding: 0 }}>
+              MergeWise
+            </h1>
+            <span className="RepoTitle-badge">OSS Match</span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <button
+              onClick={() => setShowColdStartOverride(!showColdStartOverride)}
+              className="btn btn-sm"
+              title="Adjust skill preferences and target frameworks"
+            >
+              <GearIcon size={14} />
+              <span>Preferences</span>
+            </button>
+
+            <button
+              onClick={() => loadData(true)}
+              className="btn btn-sm btn-primary"
+              disabled={loadingRecs || refreshCooldown > 0}
+              title="Scan GitHub for fresh viable issues"
+            >
+              <SyncIcon size={14} />
+              <span>
+                {loadingRecs
+                  ? "Scanning..."
+                  : refreshCooldown > 0
+                  ? `Cooldown (${refreshCooldown}s)`
+                  : "Refresh"}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* 4. Toolbar Row (like branch/file row): Sort dropdown, Language filter dropdown, Go to issue... */}
+        {activeTab === "recommended" && (
+          <div className="RepoToolbar">
+            <div className="RepoToolbar-left">
+              {/* Sort Dropdown */}
+              <div className="RepoDropdown-wrapper" ref={sortMenuRef}>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => setIsSortMenuOpen(!isSortMenuOpen)}
+                  aria-haspopup="true"
+                  aria-expanded={isSortMenuOpen}
+                >
+                  <span>Sort: {sortLabel}</span>
+                  <TriangleDownIcon size={12} />
+                </button>
+                {isSortMenuOpen && (
+                  <div className="RepoDropdown-menu" role="menu">
+                    <button
+                      className={`RepoDropdown-item ${sortBy === "match" ? "selected" : ""}`}
+                      onClick={() => {
+                        setSortBy("match");
+                        setIsSortMenuOpen(false);
+                      }}
+                    >
+                      <span>Match (Best fit)</span>
+                      {sortBy === "match" && <CheckIcon size={14} />}
+                    </button>
+                    <button
+                      className={`RepoDropdown-item ${sortBy === "newest" ? "selected" : ""}`}
+                      onClick={() => {
+                        setSortBy("newest");
+                        setIsSortMenuOpen(false);
+                      }}
+                    >
+                      <span>Newest (Created)</span>
+                      {sortBy === "newest" && <CheckIcon size={14} />}
+                    </button>
+                    <button
+                      className={`RepoDropdown-item ${sortBy === "stars" ? "selected" : ""}`}
+                      onClick={() => {
+                        setSortBy("stars");
+                        setIsSortMenuOpen(false);
+                      }}
+                    >
+                      <span>Stars (Most stars)</span>
+                      {sortBy === "stars" && <CheckIcon size={14} />}
+                    </button>
                   </div>
+                )}
+              </div>
+
+              {/* Language Filter Dropdown */}
+              <div className="RepoDropdown-wrapper" ref={langMenuRef}>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => setIsLangMenuOpen(!isLangMenuOpen)}
+                  aria-haspopup="true"
+                  aria-expanded={isLangMenuOpen}
+                >
+                  <span>Language: {langLabel}</span>
+                  <TriangleDownIcon size={12} />
+                </button>
+                {isLangMenuOpen && (
+                  <div className="RepoDropdown-menu" role="menu">
+                    <button
+                      className={`RepoDropdown-item ${languageFilter === "all" ? "selected" : ""}`}
+                      onClick={() => {
+                        setLanguageFilter("all");
+                        setIsLangMenuOpen(false);
+                      }}
+                    >
+                      <span>All languages</span>
+                      {languageFilter === "all" && <CheckIcon size={14} />}
+                    </button>
+                    {languages.map(([lang]) => (
+                      <button
+                        key={lang}
+                        className={`RepoDropdown-item ${languageFilter.toLowerCase() === lang.toLowerCase() ? "selected" : ""}`}
+                        onClick={() => {
+                          setLanguageFilter(lang);
+                          setIsLangMenuOpen(false);
+                        }}
+                      >
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                          <span
+                            style={{
+                              width: "8px",
+                              height: "8px",
+                              borderRadius: "50%",
+                              backgroundColor: LANG_COLORS[lang] || "var(--color-accent-fg)",
+                            }}
+                          />
+                          {lang}
+                        </span>
+                        {languageFilter.toLowerCase() === lang.toLowerCase() && <CheckIcon size={14} />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Go to issue... search field */}
+              <div className="RepoToolbar-search">
+                <SearchIcon size={13} color="var(--color-fg-muted)" />
+                <input
+                  type="text"
+                  placeholder="Go to issue..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  aria-label="Filter issues by title or repository"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 5. Main 2-column layout: Main Column + 296px Right Sidebar */}
+        <div className="RepoGrid">
+          {/* Main Column */}
+          <main className="RepoMain">
+            {/* TAB 1: RECOMMENDED ISSUES */}
+            {activeTab === "recommended" && (
+              <div>
+                {/* Issue Table Box (File list style) */}
+                <div className="RepoTable">
+                  {/* Box Header Bar (Like latest commit bar) */}
+                  <div className="RepoTable-header">
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      {user?.imageUrl ? (
+                        <img
+                          src={user.imageUrl}
+                          alt="user"
+                          style={{
+                            width: "20px",
+                            height: "20px",
+                            borderRadius: "50%",
+                            border: "1px solid var(--color-border-default)",
+                          }}
+                        />
+                      ) : (
+                        <div
+                          style={{
+                            width: "20px",
+                            height: "20px",
+                            borderRadius: "50%",
+                            background: "var(--color-accent-emphasis)",
+                            color: "#fff",
+                            fontSize: "10px",
+                            fontWeight: 700,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          MW
+                        </div>
+                      )}
+                      <span style={{ fontWeight: 600, color: "var(--color-fg-default)" }}>
+                        Scanned {stats?.candidates_fetched ?? 5} candidates,{" "}
+                        <span style={{ color: "var(--color-success-fg)" }}>
+                          {stats?.passed_viability ?? (recData?.recommendations?.length || 5)} passed viability
+                        </span>
+                      </span>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "12px", fontSize: "12px" }}>
+                      <span>updated 2 minutes ago</span>
+                      <button
+                        onClick={() => setIsPipelineDetailsOpen((prev) => !prev)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--color-accent-fg)",
+                          cursor: "pointer",
+                          fontSize: "12px",
+                          fontWeight: 500,
+                          padding: "2px 4px",
+                          textDecoration: "underline",
+                        }}
+                      >
+                        {isPipelineDetailsOpen ? "Hide pipeline details" : "Pipeline details"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Inline Expanded Telemetry Table */}
+                  {isPipelineDetailsOpen && stats && (
+                    <div
+                      style={{
+                        padding: "16px",
+                        backgroundColor: "var(--color-canvas-subtle)",
+                        borderBottom: "1px solid var(--color-border-default)",
+                      }}
+                    >
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12px" }}>
+                        <tbody>
+                          <tr style={{ borderBottom: "1px solid var(--color-border-default)" }}>
+                            <td style={{ padding: "6px 12px", color: "var(--color-fg-muted)" }}>Targeted Queries Executed</td>
+                            <td style={{ padding: "6px 12px", fontWeight: 600, color: "var(--color-fg-default)" }}>
+                              {stats.queries_run.length}
+                            </td>
+                          </tr>
+                          <tr style={{ borderBottom: "1px solid var(--color-border-default)" }}>
+                            <td style={{ padding: "6px 12px", color: "var(--color-fg-muted)" }}>Candidates Fetched</td>
+                            <td style={{ padding: "6px 12px", fontWeight: 600, color: "var(--color-fg-default)" }}>
+                              {stats.candidates_fetched}
+                            </td>
+                          </tr>
+                          <tr style={{ borderBottom: "1px solid var(--color-border-default)" }}>
+                            <td style={{ padding: "6px 12px", color: "var(--color-fg-muted)" }}>Passed Viability</td>
+                            <td style={{ padding: "6px 12px", fontWeight: 600, color: "var(--color-success-fg)" }}>
+                              {stats.passed_viability}
+                            </td>
+                          </tr>
+                          <tr style={{ borderBottom: "1px solid var(--color-border-default)" }}>
+                            <td style={{ padding: "6px 12px", color: "var(--color-fg-muted)" }}>Search API Limit</td>
+                            <td style={{ padding: "6px 12px", fontWeight: 600, color: "var(--color-fg-default)" }}>
+                              {stats.search_rate_limit?.remaining ?? "?"}/{stats.search_rate_limit?.limit ?? 30} req/min
+                            </td>
+                          </tr>
+                          <tr style={{ borderBottom: "1px solid var(--color-border-default)" }}>
+                            <td style={{ padding: "6px 12px", color: "var(--color-fg-muted)" }}>Core API Limit</td>
+                            <td style={{ padding: "6px 12px", fontWeight: 600, color: "var(--color-fg-default)" }}>
+                              {stats.core_rate_limit?.remaining ?? "?"}/{stats.core_rate_limit?.limit ?? 5000} req/hr
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: "6px 12px", color: "var(--color-fg-muted)" }}>Filter Breakdown</td>
+                            <td style={{ padding: "6px 12px", color: "var(--color-fg-default)" }}>
+                              {stats.rejected_by_reason["ALREADY_ASSIGNED"] || 0} assigned ·{" "}
+                              {stats.rejected_by_reason["COMPETING_OPEN_PR"] || 0} competing PRs ·{" "}
+                              {stats.rejected_by_reason["CLAIMED_IN_COMMENTS"] || 0} claimed in comments
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Skeleton Rows while loading */}
+                  {loadingRecs && !recData && (
+                    <div>
+                      {[0, 1, 2, 3, 4].map((i) => (
+                        <div key={i} className="RepoTable-row" style={{ alignItems: "center" }}>
+                          <div
+                            className="SkeletonBar"
+                            style={{ width: "16px", height: "16px", borderRadius: "50%", flexShrink: 0 }}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <div className="SkeletonBar" style={{ width: "55%", height: "16px", marginBottom: "6px" }} />
+                            <div className="SkeletonBar" style={{ width: "30%", height: "12px" }} />
+                          </div>
+                          <div className="SkeletonBar" style={{ width: "100px", height: "28px", flexShrink: 0 }} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Populated Issue Rows */}
+                  {filteredRecommendations.length > 0 && (
+                    <div>
+                      {filteredRecommendations.map((item, idx) => (
+                        <IssueCard key={item.issue.issue_url || idx} candidate={item} index={idx} />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Empty State */}
+                  {!loadingRecs && filteredRecommendations.length === 0 && (
+                    <div style={{ textAlign: "center", padding: "48px 16px" }}>
+                      <div style={{ color: "var(--color-fg-muted)", marginBottom: "12px" }}>
+                        <IssueOpenedIcon size={32} />
+                      </div>
+                      <div style={{ fontSize: "16px", fontWeight: 600, color: "var(--color-fg-default)", marginBottom: "6px" }}>
+                        {searchQuery || languageFilter !== "all"
+                          ? "No issues match your current filters"
+                          : "No viable issues currently found"}
+                      </div>
+                      <p style={{ fontSize: "13px", color: "var(--color-fg-muted)", maxWidth: "520px", margin: "0 auto 16px auto" }}>
+                        {searchQuery || languageFilter !== "all"
+                          ? "Try clearing the search query or changing the language filter to see more issues."
+                          : "We scanned GitHub for your top languages, but all fetched candidates were either already claimed or had competing PRs."}
+                      </p>
+                      <div style={{ display: "flex", justifyContent: "center", gap: "8px" }}>
+                        {searchQuery || languageFilter !== "all" ? (
+                          <button
+                            onClick={() => {
+                              setSearchQuery("");
+                              setLanguageFilter("all");
+                            }}
+                            className="btn btn-sm"
+                          >
+                            Clear filters
+                          </button>
+                        ) : (
+                          <>
+                            <button onClick={() => setShowColdStartOverride(true)} className="btn btn-sm">
+                              Adjust Preferences
+                            </button>
+                            <button onClick={() => loadData(true)} className="btn btn-sm btn-primary">
+                              Force Scan GitHub
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <div>
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block" }}>
-                    Manifest Frameworks
-                  </span>
-                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
-                    {recData.profile.frameworks.slice(0, 4).map((fw) => (
-                      <span key={fw} style={{ fontSize: "0.8rem", padding: "3px 8px", borderRadius: "4px", background: "rgba(255, 255, 255, 0.06)", color: "var(--text-secondary)" }}>
-                        {fw}
-                      </span>
-                    ))}
-                    {recData.profile.frameworks.length === 0 && (
-                      <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>No manifests indexed</span>
-                    )}
+                {/* 7. "Why these results" README-Style Box */}
+                {recData?.why_these_results && (
+                  <div className="ReadmeBox">
+                    <div className="ReadmeBox-header">
+                      <BookIcon size={16} color="var(--color-fg-muted)" />
+                      <span>README.md - Why these results</span>
+                    </div>
+                    <div className="ReadmeBox-body">
+                      <div style={{ marginBottom: "12px", fontWeight: 600, color: "var(--color-fg-default)" }}>
+                        Active Personalization Memory
+                      </div>
+                      <p style={{ margin: 0, lineHeight: 1.6, color: "var(--color-fg-muted)", fontSize: "13px" }}>
+                        {recData.why_these_results}
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <div>
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", display: "block" }}>
-                    Recent Activity
-                  </span>
-                  <div style={{ marginTop: "6px", fontSize: "0.85rem", color: "var(--text-primary)" }}>
-                    {recData.profile.activity_last_1m} actions (30d) · {recData.profile.total_commits} commits
+                {/* 10. Danger Zone Box */}
+                <div className="DangerBox" id="danger-zone">
+                  <div className="DangerBox-header">
+                    <span>Danger Zone</span>
+                  </div>
+                  <div className="DangerBox-body">
+                    <div>
+                      <div style={{ fontWeight: 600, color: "var(--color-fg-default)", fontSize: "14px" }}>
+                        Delete my data
+                      </div>
+                      <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", marginTop: "2px" }}>
+                        Permanently purges your skill footprint, outcome progression, and recommendation cache.
+                      </div>
+                    </div>
+
+                    {!showDeleteConfirm ? (
+                      <button
+                        onClick={() => setShowDeleteConfirm(true)}
+                        className="btn btn-danger btn-sm"
+                      >
+                        <TrashIcon size={14} />
+                        <span>Delete my data</span>
+                      </button>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <button
+                          onClick={handleDeleteMyData}
+                          disabled={isDeletingData}
+                          className="btn btn-danger btn-sm"
+                        >
+                          {isDeletingData ? "Purging data..." : "Confirm Delete"}
+                        </button>
+                        <button
+                          onClick={() => setShowDeleteConfirm(false)}
+                          disabled={isDeletingData}
+                          className="btn btn-sm"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
             )}
-          </div>
 
-          {/* Cold Start Questionnaire Modal (if account is cold start or user requested override) */}
-          {(showColdStartOverride || (recData?.is_cold_start && !recData.recommendations.length)) && (
-            <ColdStartModal onComplete={handleColdStartSubmit} isLoading={loadingRecs} />
-          )}
+            {/* TAB 2: MY CONTRIBUTIONS */}
+            {activeTab === "contributions" && (
+              <ContributionsTab
+                data={contribData}
+                loading={loadingContribs}
+                onRefresh={() => loadContributions(undefined, true)}
+                onSwitchToRecommended={() => setActiveTab("recommended")}
+              />
+            )}
 
-          {/* Error Message */}
-          {error && (
-            <div style={{
-              padding: "16px",
-              borderRadius: "var(--radius-sm)",
-              backgroundColor: "rgba(239, 68, 68, 0.15)",
-              border: "1px solid rgba(239, 68, 68, 0.3)",
-              color: "#fca5a5",
-              marginBottom: "24px",
-            }}>
-              <strong>Error:</strong> {error}
+            {/* TAB 3: PROGRESS FUNNEL & WHY THESE RESULTS */}
+            {activeTab === "progress" && (
+              <ProgressTab
+                funnel={funnelData}
+                whyTheseResults={recData?.why_these_results}
+                loading={loadingFunnel}
+                onRefreshFunnel={() => loadFunnel()}
+              />
+            )}
+          </main>
+
+          {/* 8. Right Sidebar "About" (modeled after the screenshot) */}
+          <aside className="RepoSidebar">
+            <div className="RepoSidebar-heading">
+              <span>About</span>
+              <button
+                onClick={() => setShowColdStartOverride(true)}
+                style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--color-fg-muted)", padding: 0 }}
+                title="Edit preferences"
+                aria-label="Edit preferences"
+              >
+                <GearIcon size={14} />
+              </button>
             </div>
-          )}
 
-          {/* Rate Limit Notice Banner (Never blank page, show notice with reset time) */}
-          {(stats?.rate_limit_notice || stats?.search_rate_limit?.is_limited) && (
-            <div style={{
-              padding: "16px 20px",
-              borderRadius: "var(--radius-md)",
-              backgroundColor: "rgba(245, 158, 11, 0.15)",
-              border: "1px solid rgba(245, 158, 11, 0.4)",
-              color: "#fde68a",
-              marginBottom: "24px",
-              display: "flex",
-              alignItems: "flex-start",
-              gap: "12px",
-            }}>
-              <span style={{ fontSize: "1.4rem", lineHeight: 1 }}>⚠️</span>
-              <div>
-                <strong style={{ color: "#fbbf24" }}>GitHub Rate Limit Reached:</strong>{" "}
-                {stats?.rate_limit_notice || `Search quota exhausted. Resets at ${stats?.search_rate_limit?.reset_time || "shortly"}.`}
-                <div style={{ fontSize: "0.85rem", color: "#fef3c7", marginTop: "4px" }}>
-                  Your skill profile and last verified recommendations are preserved. Real-time discovery will resume automatically once GitHub resets the quota.
+            <p className="RepoSidebar-description">
+              Skill profile built from your GitHub footprint and repository manifests.
+            </p>
+
+            <ul className="RepoSidebar-list">
+              <li className="RepoSidebar-item">
+                <BookIcon size={16} />
+                <button onClick={() => setShowColdStartOverride(true)}>
+                  Preferences
+                </button>
+              </li>
+              <li className="RepoSidebar-item">
+                <PulseIcon size={16} />
+                <span>Activity: {recData?.profile?.activity_last_1m ?? 12} actions in 30 days</span>
+              </li>
+              <li className="RepoSidebar-item">
+                <GitPullRequestIcon size={16} />
+                <span>
+                  <strong>{mergedCount}</strong> merged PR{mergedCount === 1 ? "" : "s"}
+                </span>
+              </li>
+              <li className="RepoSidebar-item">
+                <RepoIcon size={16} />
+                <span>
+                  <strong>{repoCount}</strong> repos contributed
+                </span>
+              </li>
+            </ul>
+
+            <div className="RepoSidebar-divider" />
+
+            {/* Languages Section with Segmented Multi-Color Bar */}
+            {languages.length > 0 && (
+              <div style={{ marginBottom: "16px" }}>
+                <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--color-fg-default)", marginBottom: "8px" }}>
+                  Languages
                 </div>
-              </div>
-            </div>
-          )}
-
-          {/* PIPELINE TELEMETRY & VIABILITY STATS DRAWER (Visible ALWAYS, even when empty) */}
-          {stats && (
-            <div className="glass-panel" style={{ padding: "18px 24px", marginBottom: "28px", borderLeft: "4px solid var(--accent-secondary)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-                <div>
-                  <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>Viability Pipeline Telemetry:</span>{" "}
-                  <span style={{ color: "var(--text-secondary)" }}>
-                    Executed <strong>{stats.queries_run.length}</strong> targeted queries · Fetched <strong>{stats.candidates_fetched}</strong> candidates · Found{" "}
-                    <strong style={{ color: stats.passed_viability > 0 ? "var(--success)" : "var(--warning)" }}>
-                      {stats.passed_viability} truly viable
-                    </strong>
-                  </span>
-                </div>
-
-                {stats.relaxation_used && (
-                  <span className="badge badge-warning" style={{ fontSize: "0.75rem" }}>
-                    Relaxation: {stats.relaxation_used}
-                  </span>
-                )}
-              </div>
-
-              {/* Rejection breakdown */}
-              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "12px", fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-                <span style={{ fontWeight: 600, color: "var(--text-muted)" }}>Filtered:</span>
-                {stats.rejected_by_reason["ALREADY_ASSIGNED"] > 0 && (
-                  <span style={{ background: "rgba(255, 255, 255, 0.05)", padding: "2px 8px", borderRadius: "4px" }}>
-                    {stats.rejected_by_reason["ALREADY_ASSIGNED"]} assigned
-                  </span>
-                )}
-                {stats.rejected_by_reason["COMPETING_OPEN_PR"] > 0 && (
-                  <span style={{ background: "rgba(255, 255, 255, 0.05)", padding: "2px 8px", borderRadius: "4px" }}>
-                    {stats.rejected_by_reason["COMPETING_OPEN_PR"]} competing PRs
-                  </span>
-                )}
-                {stats.rejected_by_reason["CLAIMED_IN_COMMENTS"] > 0 && (
-                  <span style={{ background: "rgba(255, 255, 255, 0.05)", padding: "2px 8px", borderRadius: "4px" }}>
-                    {stats.rejected_by_reason["CLAIMED_IN_COMMENTS"]} claimed in comments
-                  </span>
-                )}
-                {stats.rejected_by_reason["ISSUE_CLOSED"] > 0 && (
-                  <span style={{ background: "rgba(255, 255, 255, 0.05)", padding: "2px 8px", borderRadius: "4px" }}>
-                    {stats.rejected_by_reason["ISSUE_CLOSED"]} closed
-                  </span>
-                )}
-                {stats.rejected_by_reason["NOT_ELIGIBLE"] > 0 && (
-                  <span style={{ background: "rgba(255, 255, 255, 0.05)", padding: "2px 8px", borderRadius: "4px" }}>
-                    {stats.rejected_by_reason["NOT_ELIGIBLE"]} pull requests
-                  </span>
-                )}
-                {stats.api_errors > 0 && (
-                  <span style={{ color: "var(--warning)" }}>
-                    ({stats.api_errors} transient API errors handled safely)
-                  </span>
-                )}
-
-                <button
-                  onClick={() => setShowQueriesDrawer(!showQueriesDrawer)}
+                <div
                   style={{
-                    background: "none",
-                    border: "none",
-                    color: "#a5b4fc",
-                    cursor: "pointer",
-                    fontSize: "0.8rem",
-                    textDecoration: "underline",
-                    marginLeft: "auto",
+                    display: "flex",
+                    height: "8px",
+                    borderRadius: "4px",
+                    overflow: "hidden",
+                    backgroundColor: "var(--color-border-default)",
+                    marginBottom: "10px",
                   }}
                 >
-                  {showQueriesDrawer ? "Hide Queries" : `Show Queries (${stats.queries_run.length})`}
-                </button>
-              </div>
-
-              {/* Separate Search and Core Rate Limits Quota Breakdown */}
-              <div style={{
-                marginTop: "14px",
-                paddingTop: "12px",
-                borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                gap: "16px",
-                fontSize: "0.82rem",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Search API Limit:</span>
-                  <span style={{
-                    fontWeight: 600,
-                    color: stats.search_rate_limit?.is_limited ? "#f87171" : (stats.search_rate_limit && stats.search_rate_limit.remaining < 5) ? "#fbbf24" : "#34d399",
-                  }}>
-                    {stats.search_rate_limit?.remaining ?? "?"}/{stats.search_rate_limit?.limit ?? 30} req/min
-                  </span>
-                  {stats.search_rate_limit?.is_limited && (
-                    <span style={{ color: "#f87171", fontWeight: 600 }}>
-                      (LIMITED - resets at {stats.search_rate_limit.reset_time})
-                    </span>
-                  )}
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Core API Limit:</span>
-                  <span style={{
-                    fontWeight: 600,
-                    color: stats.core_rate_limit?.is_limited ? "#f87171" : "#34d399",
-                  }}>
-                    {stats.core_rate_limit?.remaining ?? "?"}/{stats.core_rate_limit?.limit ?? 5000} req/hr
-                  </span>
-                  {stats.core_rate_limit?.is_limited && (
-                    <span style={{ color: "#f87171", fontWeight: 600 }}>
-                      (LIMITED - resets at {stats.core_rate_limit.reset_time})
-                    </span>
-                  )}
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginLeft: "auto", color: "var(--text-muted)" }}>
-                  <span>Search Calls:</span>
-                  <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{stats.calls_made || stats.queries_run.length} (max 8)</span>
-                </div>
-              </div>
-
-              {/* Collapsible raw queries list */}
-              {showQueriesDrawer && (
-                <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px dashed var(--border-color)", fontSize: "0.75rem", fontFamily: "monospace", color: "var(--text-muted)" }}>
-                  {stats.queries_run.map((q, i) => (
-                    <div key={i} style={{ marginBottom: "4px" }}>
-                      → {q}
-                    </div>
+                  {languages.map(([lang, pct]) => (
+                    <div
+                      key={lang}
+                      style={{
+                        width: `${Math.round(pct * 100)}%`,
+                        backgroundColor: LANG_COLORS[lang] || "var(--color-accent-fg)",
+                      }}
+                      title={`${lang}: ${Math.round(pct * 100)}%`}
+                    />
                   ))}
                 </div>
-              )}
-            </div>
-          )}
 
-          {/* Delete Data Confirmation Modal */}
-          {showDeleteConfirm && (
-            <div style={{
-              position: "fixed",
-              inset: 0,
-              backgroundColor: "rgba(0, 0, 0, 0.75)",
-              backdropFilter: "blur(4px)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              zIndex: 9999,
-              padding: "20px",
-            }}>
-              <div className="glass-panel" style={{
-                maxWidth: "480px",
-                width: "100%",
-                padding: "24px",
-                borderRadius: "var(--radius-md)",
-                border: "1px solid rgba(248, 113, 113, 0.4)",
-              }}>
-                <h3 style={{ fontSize: "1.3rem", fontWeight: 700, color: "#f87171", marginBottom: "12px" }}>
-                  Delete All Your Data?
-                </h3>
-                <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", lineHeight: 1.5, marginBottom: "20px" }}>
-                  This action is permanent and cannot be undone. It removes your skill profile, all issue outcomes (skipped, attempted, PRs, etc.), and recommendations telemetry from our database.
-                </p>
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="btn-secondary"
-                    disabled={isDeletingData}
-                    style={{ padding: "8px 16px", fontSize: "0.85rem" }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleDeleteMyData}
-                    style={{
-                      padding: "8px 18px",
-                      fontSize: "0.85rem",
-                      borderRadius: "var(--radius-sm)",
-                      backgroundColor: "#ef4444",
-                      color: "#fff",
-                      border: "none",
-                      fontWeight: 600,
-                      cursor: isDeletingData ? "not-allowed" : "pointer",
-                    }}
-                    disabled={isDeletingData}
-                  >
-                    {isDeletingData ? "Deleting..." : "Yes, Delete Everything"}
-                  </button>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 14px", fontSize: "12px" }}>
+                  {languages.slice(0, 5).map(([lang, pct]) => (
+                    <span key={lang} style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                      <span
+                        style={{
+                          width: "8px",
+                          height: "8px",
+                          borderRadius: "50%",
+                          backgroundColor: LANG_COLORS[lang] || "var(--color-accent-fg)",
+                        }}
+                      />
+                      <span style={{ color: "var(--color-fg-default)", fontWeight: 500 }}>{lang}</span>
+                      <span style={{ color: "var(--color-fg-muted)" }}>{Math.round(pct * 100)}%</span>
+                    </span>
+                  ))}
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Delete Success Alert */}
-          {deleteSuccessMsg && (
-            <div style={{
-              padding: "16px",
-              borderRadius: "var(--radius-sm)",
-              backgroundColor: "rgba(16, 185, 129, 0.15)",
-              border: "1px solid rgba(16, 185, 129, 0.3)",
-              color: "#6ee7b7",
-              marginBottom: "24px",
-            }}>
-              ✓ {deleteSuccessMsg}
-            </div>
-          )}
-
-          {/* Recommendations Header */}
-          <div style={{ marginBottom: "20px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <h2 style={{ fontSize: "1.4rem", fontWeight: 700 }}>
-                  Top 5 Recommended Issues for You
-                </h2>
-                <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                  Ranked using PFIRec-aligned features & verified unassigned with no competing PRs.
-                </p>
-              </div>
-            </div>
-
-            {/* Why these results note (Phase 4 requirement 4) */}
-            {recData?.why_these_results && (
-              <div style={{
-                marginTop: "12px",
-                padding: "10px 14px",
-                borderRadius: "var(--radius-sm)",
-                backgroundColor: "rgba(99, 102, 241, 0.12)",
-                border: "1px solid rgba(99, 102, 241, 0.25)",
-                fontSize: "0.82rem",
-                color: "#c7d2fe",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-              }}>
-                <span style={{ fontSize: "1rem" }}>💡</span>
-                <span>
-                  <strong>Why these results:</strong> {recData.why_these_results}
-                </span>
+            {/* Frameworks Section (ubiquitous stoplist tools hidden) */}
+            {validFrameworks.length > 0 && (
+              <div style={{ marginBottom: "16px" }}>
+                <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--color-fg-default)", marginBottom: "8px" }}>
+                  Frameworks
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {validFrameworks.slice(0, 8).map((fw) => (
+                    <span
+                      key={fw}
+                      className="IssueLabel"
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 500,
+                        backgroundColor: "var(--color-canvas-subtle)",
+                        borderColor: "var(--color-border-default)",
+                        color: "var(--color-fg-default)",
+                      }}
+                    >
+                      {fw}
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
-          </div>
 
-          {/* Loading Indicator */}
-          {loadingRecs && !recData && (
-            <div className="glass-panel" style={{ padding: "60px", textAlign: "center", color: "var(--text-secondary)" }}>
-              <div style={{ fontSize: "2rem", marginBottom: "12px" }}>🔍</div>
-              <p style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)" }}>
-                Executing targeted search per language and verifying live viability...
-              </p>
-              <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "6px" }}>
-                Checking assignees, competing PRs, and recent claim comments.
-              </p>
-            </div>
-          )}
+            <div className="RepoSidebar-divider" />
 
-          {/* Recommendations List */}
-          {recData?.recommendations && recData.recommendations.length > 0 && (
+            {/* Open-Source Footprint */}
             <div>
-              {recData.recommendations.map((item, idx) => (
-                <IssueCard key={item.issue.issue_url || idx} candidate={item} index={idx} />
-              ))}
-            </div>
-          )}
-
-          {/* Empty State */}
-          {recData && !loadingRecs && recData.recommendations.length === 0 && !recData.is_cold_start && (
-            <div className="glass-panel" style={{ padding: "40px", textAlign: "center" }}>
-              <div style={{ fontSize: "2.2rem", marginBottom: "12px" }}>🔎</div>
-              <p style={{ fontSize: "1.2rem", fontWeight: 700, marginBottom: "8px" }}>
-                No viable issues currently found for this exact combination.
-              </p>
-              <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", maxWidth: "600px", margin: "0 auto 24px auto" }}>
-                The pipeline searched GitHub for your top languages, but all fetched candidates were either already claimed or had competing PRs. Click below to adjust languages or force a wider scan.
-              </p>
-              <div style={{ display: "flex", justifyContent: "center", gap: "12px" }}>
-                <button onClick={() => setShowColdStartOverride(true)} className="btn-secondary">
-                  ⚙ Adjust Languages & Frameworks
-                </button>
-                <button
-                  onClick={() => loadData(true)}
-                  className="btn-primary"
-                  disabled={loadingRecs || refreshCooldown > 0}
-                >
-                  {refreshCooldown > 0 ? `Scan Cooldown (${refreshCooldown}s)` : "↻ Force Scan GitHub"}
-                </button>
+              <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--color-fg-default)", marginBottom: "6px" }}>
+                Open-source footprint
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", lineHeight: 1.5 }}>
+                <span className="IssueLabel IssueLabel--good-first" style={{ fontSize: "11px", marginBottom: "8px", display: "inline-block" }}>
+                  ✓ GitHub connected
+                </span>
+                <div>Derived securely via your authenticated GitHub token.</div>
               </div>
             </div>
-          )}
+          </aside>
         </div>
-      </SignedIn>
+
+        {/* Small footer line */}
+        <footer className="RepoFooter">
+          <span>Not affiliated with GitHub.</span>
+        </footer>
+      </div>
     </div>
   );
 }

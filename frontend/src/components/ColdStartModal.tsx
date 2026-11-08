@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { ColdStartQuestionnaire } from "@/lib/types";
+import { CheckIcon } from "./Octicons";
 
 interface ColdStartModalProps {
   onComplete: (answers: ColdStartQuestionnaire) => void;
@@ -41,118 +42,110 @@ export default function ColdStartModal({ onComplete, isLoading }: ColdStartModal
   };
 
   return (
-    <div className="glass-panel" style={{ padding: "32px", maxWidth: "700px", margin: "0 auto", marginBottom: "40px" }}>
-      <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", padding: "4px 12px", borderRadius: "9999px", background: "rgba(245, 158, 11, 0.15)", border: "1px solid rgba(245, 158, 11, 0.3)", color: "var(--warning)", fontSize: "0.8rem", marginBottom: "16px" }}>
-        <span>⚡</span> Cold Start: Set Your Focus
+    <div className="Box" style={{ marginBottom: "24px" }}>
+      <div className="Box-header">
+        <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--color-fg-default)" }}>
+          Preferences &amp; Focus Areas
+        </h3>
+        <span
+          className="IssueLabel"
+          style={{
+            backgroundColor: "var(--color-attention-subtle)",
+            color: "var(--color-attention-fg)",
+            borderColor: "var(--color-attention-border)",
+            fontWeight: 600,
+          }}
+        >
+          Cold Start Customization
+        </span>
       </div>
 
-      <h2 style={{ fontSize: "1.6rem", fontWeight: 700, marginBottom: "8px" }}>
-        Tell MergeWise What You Want to Work On
-      </h2>
-      <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem", marginBottom: "24px" }}>
-        Your GitHub account has limited public activity. Select your primary languages and target stacks so we can match you with the right open-source issues.
-      </p>
+      <div className="Box-body">
+        <p style={{ fontSize: "13px", color: "var(--color-fg-muted)", marginBottom: "16px" }}>
+          Configure your primary languages and target stacks so MergeWise can match you with the right open-source issues.
+        </p>
 
-      <form onSubmit={handleSubmit}>
-        {/* Languages */}
-        <div style={{ marginBottom: "20px" }}>
-          <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, marginBottom: "8px" }}>
-            Primary Languages (select at least one):
-          </label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            {AVAILABLE_LANGUAGES.map((lang) => {
-              const active = selectedLangs.includes(lang);
-              return (
-                <button
-                  type="button"
-                  key={lang}
-                  onClick={() => toggleItem(selectedLangs, setSelectedLangs, lang)}
-                  style={{
-                    padding: "6px 14px",
-                    borderRadius: "9999px",
-                    fontSize: "0.85rem",
-                    cursor: "pointer",
-                    border: active ? "1px solid var(--accent-primary)" : "1px solid var(--border-color)",
-                    backgroundColor: active ? "rgba(99, 102, 241, 0.25)" : "rgba(255, 255, 255, 0.04)",
-                    color: active ? "#c7d2fe" : "var(--text-secondary)",
-                    fontWeight: active ? 600 : 400,
-                  }}
-                >
-                  {active ? "✓ " : ""}{lang}
-                </button>
-              );
-            })}
+        <form onSubmit={handleSubmit}>
+          {/* Languages */}
+          <div style={{ marginBottom: "16px" }}>
+            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "var(--color-fg-default)", marginBottom: "8px" }}>
+              Primary Languages (select at least one):
+            </label>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+              {AVAILABLE_LANGUAGES.map((lang) => {
+                const active = selectedLangs.includes(lang);
+                return (
+                  <button
+                    type="button"
+                    key={lang}
+                    onClick={() => toggleItem(selectedLangs, setSelectedLangs, lang)}
+                    className={`btn btn-sm ${active ? "btn-primary" : ""}`}
+                    style={{ fontSize: "12px", height: "26px", padding: "0 10px" }}
+                  >
+                    {active && <CheckIcon size={12} />}
+                    {lang}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        {/* Frameworks */}
-        <div style={{ marginBottom: "20px" }}>
-          <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, marginBottom: "8px" }}>
-            Frameworks & Libraries:
-          </label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            {AVAILABLE_FRAMEWORKS.map((fw) => {
-              const active = selectedFrameworks.includes(fw);
-              return (
-                <button
-                  type="button"
-                  key={fw}
-                  onClick={() => toggleItem(selectedFrameworks, setSelectedFrameworks, fw)}
-                  style={{
-                    padding: "6px 14px",
-                    borderRadius: "9999px",
-                    fontSize: "0.85rem",
-                    cursor: "pointer",
-                    border: active ? "1px solid var(--accent-primary)" : "1px solid var(--border-color)",
-                    backgroundColor: active ? "rgba(99, 102, 241, 0.25)" : "rgba(255, 255, 255, 0.04)",
-                    color: active ? "#c7d2fe" : "var(--text-secondary)",
-                    fontWeight: active ? 600 : 400,
-                  }}
-                >
-                  {active ? "✓ " : ""}{fw}
-                </button>
-              );
-            })}
+          {/* Frameworks */}
+          <div style={{ marginBottom: "16px" }}>
+            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "var(--color-fg-default)", marginBottom: "8px" }}>
+              Frameworks &amp; Libraries:
+            </label>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+              {AVAILABLE_FRAMEWORKS.map((fw) => {
+                const active = selectedFrameworks.includes(fw);
+                return (
+                  <button
+                    type="button"
+                    key={fw}
+                    onClick={() => toggleItem(selectedFrameworks, setSelectedFrameworks, fw)}
+                    className={`btn btn-sm ${active ? "btn-primary" : ""}`}
+                    style={{ fontSize: "12px", height: "26px", padding: "0 10px" }}
+                  >
+                    {active && <CheckIcon size={12} />}
+                    {fw}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        {/* Areas of Interest */}
-        <div style={{ marginBottom: "24px" }}>
-          <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, marginBottom: "8px" }}>
-            Areas of Interest:
-          </label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            {AVAILABLE_INTERESTS.map((interest) => {
-              const active = selectedInterests.includes(interest);
-              return (
-                <button
-                  type="button"
-                  key={interest}
-                  onClick={() => toggleItem(selectedInterests, setSelectedInterests, interest)}
-                  style={{
-                    padding: "6px 14px",
-                    borderRadius: "9999px",
-                    fontSize: "0.85rem",
-                    cursor: "pointer",
-                    border: active ? "1px solid var(--accent-primary)" : "1px solid var(--border-color)",
-                    backgroundColor: active ? "rgba(99, 102, 241, 0.25)" : "rgba(255, 255, 255, 0.04)",
-                    color: active ? "#c7d2fe" : "var(--text-secondary)",
-                    fontWeight: active ? 600 : 400,
-                  }}
-                >
-                  {active ? "✓ " : ""}{interest}
-                </button>
-              );
-            })}
+          {/* Areas of Interest */}
+          <div style={{ marginBottom: "20px" }}>
+            <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "var(--color-fg-default)", marginBottom: "8px" }}>
+              Areas of Interest:
+            </label>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+              {AVAILABLE_INTERESTS.map((interest) => {
+                const active = selectedInterests.includes(interest);
+                return (
+                  <button
+                    type="button"
+                    key={interest}
+                    onClick={() => toggleItem(selectedInterests, setSelectedInterests, interest)}
+                    className={`btn btn-sm ${active ? "btn-primary" : ""}`}
+                    style={{ fontSize: "12px", height: "26px", padding: "0 10px" }}
+                  >
+                    {active && <CheckIcon size={12} />}
+                    {interest}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <button type="submit" className="btn-primary" disabled={isLoading}>
-            {isLoading ? "Finding Viable Matches..." : "Save Preferences & Find Issues →"}
-          </button>
-        </div>
-      </form>
+          {/* Action Row */}
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button type="submit" className="btn btn-primary" disabled={isLoading}>
+              {isLoading ? "Finding Viable Matches..." : "Save Preferences & Find Issues →"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

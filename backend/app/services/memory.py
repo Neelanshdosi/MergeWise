@@ -532,9 +532,11 @@ async def delete_all_user_data(user_id: str) -> bool:
         # 1. Clear in-memory caches for this user
         from ..routers.recommendations import clear_user_recommendations_cache
         from ..agent.gemini import clear_user_plan_cache
+        from ..routers.contributions import clear_user_contributions_cache
 
         clear_user_recommendations_cache(user_id)
         clear_user_plan_cache(user_id)
+        clear_user_contributions_cache(user_id)
 
         # 2. Recursive delete on Firestore document users/{user_id}
         client = await _get_client()

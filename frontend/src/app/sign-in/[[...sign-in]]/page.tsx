@@ -6,8 +6,9 @@ export default function SignInPage() {
       display: "flex",
       justifyContent: "center",
       alignItems: "center",
-      minHeight: "80vh",
+      minHeight: "100vh",
       padding: "20px",
+      backgroundColor: "#0E1116",
     }}>
       <SignIn />
     </div>

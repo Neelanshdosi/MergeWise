@@ -5,16 +5,55 @@ import { useAuth } from "@clerk/nextjs";
 import { ScoredIssueCandidate } from "@/lib/types";
 import PlanModal from "./PlanModal";
 import { OutcomeButtons } from "./OutcomeButtons";
+import { IssueOpenedIcon, StarIcon } from "./Octicons";
+import CircularScoreRing from "./CircularScoreRing";
 
 interface IssueCardProps {
   candidate: ScoredIssueCandidate;
   index: number;
 }
 
+function getLabelStyle(label: string): { bg: string; border: string; color: string } {
+  const l = label.toLowerCase();
+  if (l.includes("good") || l.includes("first") || l.includes("beginner")) {
+    return {
+      bg: "var(--color-success-subtle)",
+      border: "var(--color-success-border)",
+      color: "var(--color-success-fg)",
+    };
+  }
+  if (l.includes("bug") || l.includes("defect") || l.includes("error")) {
+    return {
+      bg: "var(--color-danger-subtle)",
+      border: "var(--color-danger-border)",
+      color: "var(--color-danger-fg)",
+    };
+  }
+  if (l.includes("doc") || l.includes("documentation")) {
+    return {
+      bg: "var(--color-accent-subtle)",
+      border: "var(--color-accent-border)",
+      color: "var(--color-accent-fg)",
+    };
+  }
+  if (l.includes("help") || l.includes("enhancement") || l.includes("feature")) {
+    return {
+      bg: "var(--color-done-subtle)",
+      border: "var(--color-done-border)",
+      color: "var(--color-done-fg)",
+    };
+  }
+  return {
+    bg: "var(--color-canvas-subtle)",
+    border: "var(--color-border-default)",
+    color: "var(--color-fg-muted)",
+  };
+}
+
 export default function IssueCard({ candidate, index }: IssueCardProps) {
-  const { issue, score, one_line_reason, score_breakdown } = candidate;
-  const scorePercent = Math.round(score * 100);
+  const { issue, score, one_line_reason, score_breakdown, features } = candidate;
   const [showBreakdown, setShowBreakdown] = useState<boolean>(false);
+  const [showFullReasoning, setShowFullReasoning] = useState<boolean>(false);
   const [isPlanModalOpen, setIsPlanModalOpen] = useState<boolean>(false);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const { getToken } = useAuth();
@@ -24,232 +63,366 @@ export default function IssueCard({ candidate, index }: IssueCardProps) {
       const token = await getToken();
       setSessionToken(token);
     } catch {
-      // Allow guest/unauthenticated preview
+      // Preview mode
     }
     setIsPlanModalOpen(true);
   };
 
+  const daysAgo = issue.created_at_epoch
+    ? Math.max(1, Math.floor((Date.now() / 1000 - issue.created_at_epoch) / 86400))
+    : 7;
+
+  const repoOwner = issue.repo_full_name.includes("/")
+    ? issue.repo_full_name.split("/")[0]
+    : "github";
+
+  // Derive contextual reason chips
+  const chips: { label: string; tooltip: string }[] = [];
+
+  // 1. Language share chip
+  if (features?.lang_commit_share && features.lang_commit_share > 0) {
+    chips.push({
+      label: `${issue.primary_language || "Language"}: ${Math.round(features.lang_commit_share * 100)}% of code`,
+      tooltip: "Matches your primary language footprint",
+    });
+  } else if (issue.primary_language) {
+    chips.push({
+      label: `${issue.primary_language}`,
+      tooltip: "Primary repository language",
+    });
+  }
+
+  // 2. Framework / Domain overlap chip
+  if (features?.domain_topic_overlap && features.domain_topic_overlap > 0) {
+    chips.push({
+      label: "Stack fit",
+      tooltip: "Repository topics and manifests align with your tools",
+    });
+  }
+
+  // 3. Issue type chip
+  const lowerLabels = (issue.labels || []).map((lbl) => lbl.toLowerCase());
+  if (lowerLabels.some((l) => l.includes("good") || l.includes("first"))) {
+    chips.push({
+      label: "Good first issue",
+      tooltip: "Targeted for first-time contributors",
+    });
+  } else if (lowerLabels.some((l) => l.includes("bug"))) {
+    chips.push({
+      label: "Bug fix",
+      tooltip: "Scoped defect correction",
+    });
+  } else if (lowerLabels.some((l) => l.includes("doc"))) {
+    chips.push({
+      label: "Docs",
+      tooltip: "Documentation improvement",
+    });
+  }
+
+  // 4. Repo updated chip
+  chips.push({
+    label: `Repo updated ${daysAgo}d ago`,
+    tooltip: "Active maintainer engagement within 90 days",
+  });
+
   return (
-    <div
-      className="glass-panel"
-      style={{
-        padding: "24px",
-        marginBottom: "20px",
-        borderLeft: `4px solid ${index === 0 ? "var(--accent-primary)" : "rgba(255, 255, 255, 0.15)"}`,
-        transition: "transform 0.2s ease, border-color 0.2s ease",
-      }}
-    >
-      {/* Header Row: Rank, Score, and Viability Badge */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "10px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <span style={{
-            width: "28px",
-            height: "28px",
-            borderRadius: "50%",
-            background: index === 0 ? "var(--accent-gradient)" : "rgba(255, 255, 255, 0.1)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "0.85rem",
-            fontWeight: 700,
-          }}>
-            #{index + 1}
-          </span>
-          <span style={{ fontSize: "0.9rem", color: "var(--text-muted)", fontWeight: 500 }}>
-            {issue.repo_full_name}
-          </span>
+    <div className="RepoTable-row">
+      {/* Col 1: Open Issue Icon & Title + Meta line */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+          <div style={{ marginTop: "3px", flexShrink: 0 }}>
+            <IssueOpenedIcon size={16} color="var(--color-success-fg)" />
+          </div>
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Title & Label Pills */}
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "baseline",
+                gap: "6px 8px",
+                marginBottom: "4px",
+              }}
+            >
+              <a
+                href={issue.html_url || issue.issue_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  color: "var(--color-fg-default)",
+                  lineHeight: 1.35,
+                  wordBreak: "break-word",
+                  textDecoration: "none",
+                }}
+                className="issue-title-link"
+              >
+                {issue.title}
+              </a>
+
+              {/* Tinted label pills */}
+              <div style={{ display: "inline-flex", flexWrap: "wrap", gap: "4px", verticalAlign: "middle" }}>
+                {issue.labels.slice(0, 3).map((lbl, i) => {
+                  const { bg, border, color } = getLabelStyle(lbl);
+                  return (
+                    <span
+                      key={i}
+                      className="IssueLabel"
+                      style={{
+                        backgroundColor: bg,
+                        borderColor: border,
+                        color: color,
+                        fontSize: "11px",
+                        lineHeight: "16px",
+                        padding: "0 6px",
+                      }}
+                    >
+                      {lbl}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Subtitle: Owner avatar, repo #number, language, score details */}
+            <div
+              style={{
+                fontSize: "12px",
+                color: "var(--color-fg-muted)",
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: "6px 10px",
+              }}
+            >
+              <div style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                <img
+                  src={`https://github.com/${repoOwner}.png?size=40`}
+                  alt={repoOwner}
+                  width={16}
+                  height={16}
+                  style={{
+                    borderRadius: "50%",
+                    flexShrink: 0,
+                    border: "1px solid var(--color-border-default)",
+                  }}
+                  onError={(e) => {
+                    (e.target as HTMLElement).style.display = "none";
+                  }}
+                />
+                <span style={{ fontWeight: 500, color: "var(--color-fg-muted)" }}>
+                  {issue.repo_full_name} #{issue.issue_number}
+                </span>
+              </div>
+
+              {issue.primary_language && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      backgroundColor: "var(--color-accent-fg)",
+                      display: "inline-block",
+                    }}
+                  />
+                  {issue.primary_language}
+                </span>
+              )}
+
+              {score_breakdown && (
+                <button
+                  onClick={() => setShowBreakdown(!showBreakdown)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--color-fg-muted)",
+                    cursor: "pointer",
+                    fontSize: "11px",
+                    padding: "0 4px",
+                    textDecoration: "underline",
+                  }}
+                >
+                  {showBreakdown ? "Hide score" : "Score details"}
+                </button>
+              )}
+            </div>
+
+            {/* Score Breakdown Drawer */}
+            {showBreakdown && score_breakdown && (
+              <div
+                style={{
+                  backgroundColor: "var(--color-canvas-subtle)",
+                  border: "1px solid var(--color-border-default)",
+                  borderRadius: "6px",
+                  padding: "8px 12px",
+                  marginTop: "8px",
+                  fontSize: "11px",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+                  gap: "6px",
+                  color: "var(--color-fg-default)",
+                }}
+              >
+                <div>
+                  <span style={{ color: "var(--color-fg-muted)" }}>Lang match:</span>{" "}
+                  <strong>{Math.round((score_breakdown.language_familiarity || 0) * 100)}%</strong>
+                </div>
+                <div>
+                  <span style={{ color: "var(--color-fg-muted)" }}>Stack fit:</span>{" "}
+                  <strong>{Math.round((score_breakdown.domain_framework_fit || 0) * 100)}%</strong>
+                </div>
+                <div>
+                  <span style={{ color: "var(--color-fg-muted)" }}>Scope clarity:</span>{" "}
+                  <strong>{Math.round((score_breakdown.issue_clarity_scoping || 0) * 100)}%</strong>
+                </div>
+                <div>
+                  <span style={{ color: "var(--color-fg-muted)" }}>Labels:</span>{" "}
+                  <strong>{Math.round((score_breakdown.labels_accessibility || 0) * 100)}%</strong>
+                </div>
+                <div>
+                  <span style={{ color: "var(--color-fg-muted)" }}>Repo health:</span>{" "}
+                  <strong>{Math.round((score_breakdown.repo_health_recency || 0) * 100)}%</strong>
+                </div>
+              </div>
+            )}
+
+            {/* Outcome Progression Buttons */}
+            <div className="RepoTable-outcome-container">
+              <OutcomeButtons
+                repoFullName={issue.repo_full_name}
+                issueNumber={issue.issue_number}
+                issueTitle={issue.title}
+                primaryLanguage={issue.primary_language}
+                labels={issue.labels}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Col 2: Reason Chips (Hidden on mobile) */}
+      <div className="RepoTable-col-chips" style={{ width: "260px", flexShrink: 0 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "4px" }}>
+          {chips.map((chip, idx) => (
+            <span
+              key={idx}
+              title={chip.tooltip}
+              style={{
+                fontSize: "11px",
+                fontWeight: 500,
+                padding: "1px 6px",
+                borderRadius: "12px",
+                backgroundColor: "var(--color-canvas-subtle)",
+                border: "1px solid var(--color-border-default)",
+                color: "var(--color-fg-muted)",
+              }}
+            >
+              {chip.label}
+            </span>
+          ))}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          {/* Match Score */}
-          <span style={{
-            fontSize: "0.8rem",
-            fontWeight: 700,
-            padding: "4px 10px",
-            borderRadius: "6px",
-            background: scorePercent >= 70 ? "rgba(99, 102, 241, 0.2)" : "rgba(255, 255, 255, 0.08)",
-            color: scorePercent >= 70 ? "#a5b4fc" : "var(--text-secondary)",
-            border: "1px solid rgba(99, 102, 241, 0.3)",
-          }}>
-            Match Score: {scorePercent}%
-          </span>
-
-          {score_breakdown && (
+        {one_line_reason && (
+          <div>
             <button
-              onClick={() => setShowBreakdown(!showBreakdown)}
+              onClick={() => setShowFullReasoning(!showFullReasoning)}
               style={{
                 background: "none",
                 border: "none",
-                color: "#a5b4fc",
+                color: "var(--color-accent-fg)",
+                fontSize: "11px",
                 cursor: "pointer",
-                fontSize: "0.75rem",
-                textDecoration: "underline",
+                padding: "2px 0",
               }}
             >
-              {showBreakdown ? "Hide Breakdown" : "Score Breakdown"}
+              {showFullReasoning ? "Hide reasoning" : "Why this issue ▾"}
             </button>
-          )}
-
-          {/* Viability Verified Badge */}
-          <span className="badge badge-success" title="Verified open, unassigned, and no competing PRs">
-            ✓ Viability Verified
-          </span>
-        </div>
+            {showFullReasoning && (
+              <div
+                style={{
+                  fontSize: "11px",
+                  color: "var(--color-fg-muted)",
+                  backgroundColor: "var(--color-canvas-subtle)",
+                  border: "1px solid var(--color-border-default)",
+                  borderRadius: "4px",
+                  padding: "6px 8px",
+                  marginTop: "4px",
+                  lineHeight: 1.4,
+                }}
+              >
+                {one_line_reason}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Score Breakdown Drawer */}
-      {showBreakdown && score_breakdown && (
-        <div style={{
-          backgroundColor: "rgba(0, 0, 0, 0.25)",
-          borderRadius: "var(--radius-sm)",
-          padding: "10px 14px",
-          marginBottom: "14px",
-          fontSize: "0.75rem",
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+      {/* Col 3: Score Ring, Stars, Updated + Action Buttons */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
           gap: "8px",
-          color: "var(--text-secondary)",
-          border: "1px dashed rgba(255, 255, 255, 0.1)",
-        }}>
-          <div>
-            <span style={{ color: "var(--text-muted)" }}>Language Match:</span>{" "}
-            <strong>{Math.round((score_breakdown.language_familiarity || 0) * 100)}%</strong>
-          </div>
-          <div>
-            <span style={{ color: "var(--text-muted)" }}>Stack / Domain:</span>{" "}
-            <strong>{Math.round((score_breakdown.domain_framework_fit || 0) * 100)}%</strong>
-          </div>
-          <div>
-            <span style={{ color: "var(--text-muted)" }}>Scope & Clarity:</span>{" "}
-            <strong>{Math.round((score_breakdown.issue_clarity_scoping || 0) * 100)}%</strong>
-          </div>
-          <div>
-            <span style={{ color: "var(--text-muted)" }}>Labels:</span>{" "}
-            <strong>{Math.round((score_breakdown.labels_accessibility || 0) * 100)}%</strong>
-          </div>
-          <div>
-            <span style={{ color: "var(--text-muted)" }}>Repo Recency:</span>{" "}
-            <strong>{Math.round((score_breakdown.repo_health_recency || 0) * 100)}%</strong>
-          </div>
-        </div>
-      )}
-
-      {/* Issue Title */}
-      <h3 style={{ fontSize: "1.2rem", fontWeight: 600, marginBottom: "12px", lineHeight: 1.4 }}>
-        <a
-          href={issue.html_url || issue.issue_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "var(--text-primary)", transition: "color 0.15s ease" }}
-          onMouseOver={(e) => (e.currentTarget.style.color = "#a5b4fc")}
-          onMouseOut={(e) => (e.currentTarget.style.color = "var(--text-primary)")}
-        >
-          {issue.title}
-        </a>
-      </h3>
-
-      {/* One-Line Personalized Match Reason */}
-      <div style={{
-        backgroundColor: "rgba(99, 102, 241, 0.08)",
-        border: "1px solid rgba(99, 102, 241, 0.2)",
-        borderRadius: "var(--radius-sm)",
-        padding: "10px 14px",
-        marginBottom: "16px",
-        display: "flex",
-        alignItems: "center",
-        gap: "10px",
-      }}>
-        <span style={{ fontSize: "1.1rem" }}>🎯</span>
-        <span style={{ fontSize: "0.9rem", color: "#c7d2fe", fontWeight: 500 }}>
-          {one_line_reason}
-        </span>
-      </div>
-
-      {/* Tags & Action Row */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-          {issue.primary_language && (
-            <span style={{
-              fontSize: "0.75rem",
-              padding: "4px 8px",
-              borderRadius: "4px",
-              background: "rgba(255, 255, 255, 0.06)",
-              color: "var(--text-secondary)",
-            }}>
-              ● {issue.primary_language}
-            </span>
-          )}
-          {issue.labels.slice(0, 3).map((lbl, i) => (
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {issue.stars > 0 && (
             <span
-              key={i}
               style={{
-                fontSize: "0.75rem",
-                padding: "4px 8px",
-                borderRadius: "4px",
-                background: lbl.toLowerCase().includes("good") ? "rgba(16, 185, 129, 0.1)" : "rgba(255, 255, 255, 0.06)",
-                color: lbl.toLowerCase().includes("good") ? "var(--success)" : "var(--text-muted)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "3px",
+                fontSize: "12px",
+                color: "var(--color-fg-muted)",
               }}
             >
-              {lbl}
-            </span>
-          ))}
-          {/* Show real star count if > 0, otherwise hidden */}
-          {issue.stars > 0 && (
-            <span style={{ fontSize: "0.75rem", padding: "4px 8px", color: "var(--text-muted)", background: "rgba(255, 255, 255, 0.03)", borderRadius: "4px" }}>
-              ★ {issue.stars.toLocaleString()}
+              <StarIcon size={13} color="var(--color-fg-muted)" />
+              {issue.stars.toLocaleString()}
             </span>
           )}
+
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ fontSize: "11px", color: "var(--color-fg-muted)", fontWeight: 500 }}>
+              Match
+            </span>
+            <CircularScoreRing score={score} size={30} strokeWidth={3} />
+          </div>
         </div>
 
-        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+        {/* Action Buttons: How to Start (Green) & View on GitHub */}
+        <div className="RepoTable-row-actions">
           <button
             onClick={handleOpenPlan}
-            className="btn-primary"
-            style={{
-              padding: "7px 16px",
-              fontSize: "0.85rem",
-              cursor: "pointer",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-            }}
+            className="btn btn-sm btn-primary"
+            title="Generate AI onboarding plan with verified file citations"
           >
-            <span>🚀</span> How to Start
+            How to Start
           </button>
           <a
             href={issue.html_url || issue.issue_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="btn-secondary"
-            style={{ padding: "6px 14px", fontSize: "0.85rem" }}
+            className="btn btn-sm"
           >
-            View on GitHub ↗
+            View on GitHub
           </a>
         </div>
       </div>
 
-      {/* Outcome Tracking (Phase 4) */}
-      <div
-        style={{
-          marginTop: "14px",
-          paddingTop: "12px",
-          borderTop: "1px solid rgba(255, 255, 255, 0.06)",
-        }}
-      >
-        <OutcomeButtons
-          repoFullName={issue.repo_full_name}
-          issueNumber={issue.issue_number}
-          issueTitle={issue.title}
+      {/* How to Start Modal */}
+      {isPlanModalOpen && (
+        <PlanModal
+          candidate={candidate}
+          isOpen={isPlanModalOpen}
+          onClose={() => setIsPlanModalOpen(false)}
+          jwtToken={sessionToken}
         />
-      </div>
-
-      {/* Deep-Dive Starter Plan Modal */}
-      <PlanModal
-        isOpen={isPlanModalOpen}
-        onClose={() => setIsPlanModalOpen(false)}
-        candidate={candidate}
-        jwtToken={sessionToken}
-      />
+      )}
     </div>
   );
 }

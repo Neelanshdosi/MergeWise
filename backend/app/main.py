@@ -8,6 +8,7 @@ from .routers.auth import auth_router
 from .routers.recommendations import router as recommendations_router
 from .routers.plan import router as plan_router
 from .routers.outcomes import router as outcomes_router
+from .routers.contributions import router as contributions_router
 
 # Initialize sensitive-token-redacting logger
 logger = setup_logging()
@@ -40,6 +41,7 @@ app.include_router(auth_router)
 app.include_router(recommendations_router)
 app.include_router(plan_router)
 app.include_router(outcomes_router)
+app.include_router(contributions_router)
 
 
 @app.get("/health", tags=["Health"])
