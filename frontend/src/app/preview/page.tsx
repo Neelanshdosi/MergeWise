@@ -443,6 +443,53 @@ export default function PreviewPage({
         </div>
       </nav>
 
+      {/* Interactive Preview Notice Banner */}
+      <div
+        style={{
+          backgroundColor: "rgba(210, 153, 34, 0.12)",
+          borderBottom: "1px solid rgba(210, 153, 34, 0.35)",
+          padding: "8px 24px",
+          fontSize: "13px",
+          color: "var(--color-attention-fg, #d29922)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: "8px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span
+            style={{
+              padding: "1px 6px",
+              borderRadius: "12px",
+              backgroundColor: "var(--color-attention-fg, #d29922)",
+              color: "#000",
+              fontWeight: 700,
+              fontSize: "11px",
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+            }}
+          >
+            Sample data
+          </span>
+          <span>
+            You are viewing the interactive showcase populated with <strong>Sample data</strong> (no GitHub login required).
+          </span>
+        </div>
+        <a
+          href="/"
+          style={{
+            color: "var(--color-accent-fg, #58a6ff)",
+            fontWeight: 500,
+            textDecoration: "none",
+            fontSize: "12px",
+          }}
+        >
+          Sign in for live recommendations &rarr;
+        </a>
+      </div>
+
       {/* Main Layout Container */}
       <div className="RepoLayout">
         {/* 3. Title Row */}
@@ -460,6 +507,25 @@ export default function PreviewPage({
               MergeWise
             </h1>
             <span className="RepoTitle-badge">OSS Match</span>
+            <span
+              className="IssueLabel"
+              style={{
+                backgroundColor: "rgba(210, 153, 34, 0.15)",
+                color: "var(--color-attention-fg, #d29922)",
+                borderColor: "rgba(210, 153, 34, 0.4)",
+                borderWidth: "1px",
+                borderStyle: "solid",
+                fontWeight: 600,
+                fontSize: "12px",
+                padding: "2px 8px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
+              }}
+            >
+              <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#d29922" }} />
+              Sample data
+            </span>
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>

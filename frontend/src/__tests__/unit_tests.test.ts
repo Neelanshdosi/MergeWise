@@ -372,4 +372,19 @@ test("dashboard pipeline telemetry details toggle state", () => {
   assert.equal(isPipelineDetailsOpen, false);
 });
 
+test("preview page contains visible sample data labels and indicators", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const previewContent = fs.readFileSync(path.resolve(process.cwd(), "src/app/preview/page.tsx"), "utf-8");
+
+  assert.ok(
+    previewContent.includes("Sample data"),
+    "Preview page must contain visible 'Sample data' label"
+  );
+  assert.ok(
+    previewContent.includes("Interactive Preview Notice Banner"),
+    "Preview page must contain interactive preview notice banner"
+  );
+});
+
 

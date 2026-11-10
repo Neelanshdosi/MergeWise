@@ -11,13 +11,14 @@
 <p align="center">
   <a href="https://mergewise-frontend-708575763180.asia-south1.run.app"><img src="https://img.shields.io/badge/Frontend-Cloud%20Run%20Live-238636?style=flat-square&logo=googlecloud" alt="Frontend Live" /></a>
   <a href="https://mergewise-backend-708575763180.asia-south1.run.app/health"><img src="https://img.shields.io/badge/Backend%20API-Cloud%20Run%20Healthy-238636?style=flat-square&logo=fastapi" alt="Backend Healthy" /></a>
+  <a href="https://github.com/Neelanshdosi/MergeWise/actions/workflows/ci.yml"><img src="https://github.com/Neelanshdosi/MergeWise/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-15%20App%20Router-000000?style=flat-square&logo=next.js" alt="Next.js 15" /></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react" alt="React 19" /></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi" alt="FastAPI" /></a>
-  <a href="https://cloud.google.com/vertex-ai"><img src="https://img.shields.io/badge/Vertex%20AI-Gemini%202.5%20Flash-4285F4?style=flat-square&logo=google" alt="Gemini 2.5 Flash" /></a>
+  <a href="https://cloud.google.com/vertex-ai"><img src="https://img.shields.io/badge/Vertex%20AI-gemini--2.5--flash-4285F4?style=flat-square&logo=google" alt="gemini-2.5-flash" /></a>
   <a href="https://clerk.com/"><img src="https://img.shields.io/badge/Auth-Clerk%20RS256%20JWKS-6C47FF?style=flat-square&logo=clerk" alt="Clerk RS256" /></a>
   <a href="https://cloud.google.com/firestore"><img src="https://img.shields.io/badge/State-Cloud%20Firestore-FFCA28?style=flat-square&logo=firebase" alt="Cloud Firestore" /></a>
-  <img src="https://img.shields.io/badge/Tests-109%20Passed-brightgreen?style=flat-square" alt="Tests 109 Passed" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License: MIT" /></a>
 </p>
 
 ---
