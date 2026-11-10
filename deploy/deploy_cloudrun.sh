@@ -35,7 +35,7 @@ gcloud run deploy mergewise-backend \
   --cpu 1 \
   --allow-unauthenticated \
   --set-secrets "CLERK_SECRET_KEY=clerk-secret-key:latest" \
-  --set-env-vars "ENVIRONMENT=production,GEMINI_MODEL_ID=${GEMINI_MODEL_ID:-gemini-3.8-flash},GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_LOCATION=${GCP_LOCATION},FIRESTORE_DATABASE_ID=(default)" \
+  --set-env-vars "ENVIRONMENT=production,GEMINI_MODEL_ID=${GEMINI_MODEL_ID:-gemini-3.8-flash},GCP_PROJECT_ID=${GCP_PROJECT_ID},GCP_LOCATION=${GCP_LOCATION},FIRESTORE_DATABASE_ID=(default),CLERK_ISSUER=${CLERK_ISSUER:-https://mutual-panther-6595.clerk.accounts.dev}" \
   --set-secrets "CLERK_SECRET_KEY=clerk-secret-key:latest"
 
 BACKEND_URL=$(gcloud run services describe mergewise-backend --region "$REGION" --format 'value(status.url)')
