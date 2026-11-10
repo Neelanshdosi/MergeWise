@@ -563,22 +563,16 @@ export default function HomePage() {
                           }}
                         />
                       ) : (
-                        <div
+                        <img
+                          src="/mergewise-logo.png"
+                          alt="MergeWise"
                           style={{
                             width: "20px",
                             height: "20px",
                             borderRadius: "50%",
-                            background: "var(--color-accent-emphasis)",
-                            color: "#fff",
-                            fontSize: "10px",
-                            fontWeight: 700,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
+                            objectFit: "cover",
                           }}
-                        >
-                          MW
-                        </div>
+                        />
                       )}
                       <span style={{ fontWeight: 600, color: "var(--color-fg-default)" }}>
                         Scanned {stats?.candidates_fetched ?? 5} candidates,{" "}
